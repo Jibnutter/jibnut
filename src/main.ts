@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { SkyDome, skyEnvironment } from './sky';
 import { Sunlight } from './sunlight';
+import { Post } from './post';
 
 const EXPOSURE = 0.6;
 const ENV_INTENSITY = 0.45;
@@ -66,11 +67,14 @@ scene.add(physicsDebug.lines);
 // Lighting: the sun, with cascaded shadows (near and far). The sky's light
 // comes from the environment map.
 const sunlight = new Sunlight(scene, camera);
+// Post-processing: ambient occlusion, then tone mapping (see post.ts)
+const post = new Post(renderer, scene, camera);
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   sunlight.updateFrustums();
+  post.resize();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
@@ -278,5 +282,5 @@ renderer.setAnimationLoop((time) => {
 
   sky.update(dt, camera);
   sunlight.update();
-  renderer.render(scene, camera);
+  post.render();
 });
