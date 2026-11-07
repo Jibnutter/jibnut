@@ -143,7 +143,7 @@ function dress(): void {
   if (key === dressedIn) return; // (Nuts changed, not the clothes)
   dressedIn = key;
   skier.setOutfit(o);
-  skier.setBoard(o.gear.kind === 'board');
+  skier.setGear(o.gear.kind === 'board' ? 'board' : o.gear.kind === 'wide-skis' ? 'zebra' : 'classic');
 }
 dress();
 progress.onProgress(dress);

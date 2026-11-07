@@ -10,7 +10,7 @@ export interface Item {
   name: string;
   price: number;
   slot: 'bottom' | 'top' | 'gear';
-  kind: 'shorts' | 'pants' | 'tee' | 'jacket' | 'skis' | 'board';
+  kind: 'shorts' | 'pants' | 'tee' | 'jacket' | 'skis' | 'wide-skis' | 'board';
   color: number;
 }
 
@@ -25,6 +25,7 @@ export const STORE: Item[] = [
   { id: 'black-pants', name: 'Black baggy snowpants', price: 1200, slot: 'bottom', kind: 'pants', color: 0x1b1c1f },
   { id: 'white-jacket', name: 'White windbreaker', price: 1000, slot: 'top', kind: 'jacket', color: 0xf4f5f2 },
   { id: 'snowboard', name: 'Snowboard', price: 1500, slot: 'gear', kind: 'board', color: 0xff7a1c },
+  { id: 'zebra-skis', name: 'Wide zebra skis', price: 4000, slot: 'gear', kind: 'wide-skis', color: 0xf4f4f1 },
 ];
 
 /** Everything there is: the free starting gear and the store's. */

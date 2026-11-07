@@ -18,8 +18,12 @@ import { createBootShell } from './gear';
 const LENGTH = 1.62;
 // Fat, boxy freeride skis: wide, nearly straight-sided, thick, with blunt
 // square-cornered tips and tails
-const WAIST = 0.124; // width underfoot
-const TIP_WIDTH = 0.134; // width at the widest point near each end (little sidecut)
+/** The ski designs: widths, and which graphics. */
+export type SkiStyle = 'classic' | 'zebra';
+const WIDTHS: Record<SkiStyle, { waist: number; tip: number }> = {
+  classic: { waist: 0.124, tip: 0.134 }, // width underfoot, and at the widest near each end (little sidecut)
+  zebra: { waist: 0.15, tip: 0.162 }, // fatter still: a powder ski
+};
 const ROUND = 0.07; // length of the (square-cornered) ends
 const THICKNESS = 0.028; // underfoot, only a little thinner at the ends
 const RISE = { tip: 0.075, tail: 0.065 }; // how high each end turns up
@@ -27,7 +31,8 @@ const RISE_LENGTH = 0.24;
 const SECTIONS = 64;
 
 /** The shape along the ski: width, height of the base, and thickness. */
-function profile(z: number): { w: number; y: number; t: number } {
+function profile(z: number, style: SkiStyle): { w: number; y: number; t: number } {
+  const { waist: WAIST, tip: TIP_WIDTH } = WIDTHS[style];
   const half = LENGTH / 2;
   const a = Math.abs(z);
   // Sidecut: widest near the ends, narrowest underfoot
@@ -45,8 +50,8 @@ function profile(z: number): { w: number; y: number; t: number } {
   return { w, y, t };
 }
 
-/** The ski's body: topsheet (group 0) and black sides and base (group 1). */
-function skiGeometry(): THREE.BufferGeometry {
+/** The ski's body: topsheet (group 0), black sides (group 1) and base (group 2). */
+function skiGeometry(style: SkiStyle): THREE.BufferGeometry {
   const pos: number[] = [];
   const uv: number[] = [];
   const idx: number[] = [];
@@ -54,7 +59,7 @@ function skiGeometry(): THREE.BufferGeometry {
   // Four strips along the ski: top, base, left side, right side
   const strips: { verts: (p: ReturnType<typeof profile>) => [number, number][]; group: number }[] = [
     { verts: (p) => [[-p.w / 2, bottom + p.y + p.t], [p.w / 2, bottom + p.y + p.t]], group: 0 }, // top
-    { verts: (p) => [[p.w / 2, bottom + p.y], [-p.w / 2, bottom + p.y]], group: 1 }, // base
+    { verts: (p) => [[p.w / 2, bottom + p.y], [-p.w / 2, bottom + p.y]], group: 2 }, // base
     { verts: (p) => [[-p.w / 2, bottom + p.y], [-p.w / 2, bottom + p.y + p.t]], group: 1 }, // left side
     { verts: (p) => [[p.w / 2, bottom + p.y + p.t], [p.w / 2, bottom + p.y]], group: 1 }, // right side
   ];
@@ -64,7 +69,7 @@ function skiGeometry(): THREE.BufferGeometry {
     const startIdx = idx.length;
     for (let i = 0; i <= SECTIONS; i++) {
       const z = -LENGTH / 2 + (LENGTH * i) / SECTIONS;
-      const p = profile(z);
+      const p = profile(z, style);
       const [a, b] = strip.verts(p);
       pos.push(a[0], a[1], z, b[0], b[1], z);
       const v = i / SECTIONS;
@@ -141,23 +146,88 @@ function topsheetTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-// Shared by every ski (and the ragdoll's copies of them)
-let shared: { geometry: THREE.BufferGeometry; materials: THREE.Material[]; binding: THREE.Material } | null = null;
-function sharedParts() {
-  if (shared) return shared;
-  const top = new THREE.MeshStandardMaterial({ map: topsheetTexture(), roughness: 0.35, metalness: 0.1 });
+/** Topsheet for the zebra skis: bold black and white stripes, angled and uneven. */
+function zebraTexture(): THREE.CanvasTexture {
+  const w = 64;
+  const h = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#f4f4f1';
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#111111';
+  // Stripes across the ski, slanted and of varying width, like a zebra
+  let y = -20;
+  let k = 0;
+  while (y < h + 20) {
+    const thick = 10 + ((k * 37) % 13);
+    const slant = 14 + ((k * 19) % 9);
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y + slant);
+    ctx.lineTo(w, y + slant + thick);
+    ctx.lineTo(0, y + thick * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    y += thick + 12 + ((k * 23) % 10);
+    k++;
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+/** A base (the underside): black, or black with JIBNUT in big white letters along it. */
+function baseTexture(text: string | null): THREE.CanvasTexture {
+  const w = 128;
+  const h = 1024; // along the ski: top of the canvas is the tip
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#121212';
+  ctx.fillRect(0, 0, w, h);
+  if (text) {
+    // Along the ski, reading tip to tail when you look at the base
+    ctx.save();
+    ctx.translate(w / 2, h / 2);
+    ctx.rotate(Math.PI / 2);
+    ctx.fillStyle = '#f4f4f1';
+    ctx.font = '900 92px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, 0, 4, h * 0.8);
+    ctx.restore();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+// Shared by every ski of a style (and the ragdoll's copies of them)
+const sharedByStyle = new Map<SkiStyle, { geometry: THREE.BufferGeometry; materials: THREE.Material[]; binding: THREE.Material }>();
+function sharedParts(style: SkiStyle) {
+  const have = sharedByStyle.get(style);
+  if (have) return have;
+  const zebra = style === 'zebra';
+  const top = new THREE.MeshStandardMaterial({ map: zebra ? zebraTexture() : topsheetTexture(), roughness: 0.35, metalness: 0.1 });
   const black = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.5 });
-  shared = {
-    geometry: skiGeometry(),
-    materials: [top, black],
+  const base = zebra ? new THREE.MeshStandardMaterial({ map: baseTexture('JIBNUT'), roughness: 0.3 }) : black;
+  const parts = {
+    geometry: skiGeometry(style),
+    materials: [top, black, base],
     binding: new THREE.MeshStandardMaterial({ color: 0x3a3f46, roughness: 0.4, metalness: 0.5 }),
   };
-  return shared;
+  sharedByStyle.set(style, parts);
+  return parts;
 }
 
 /** One ski with its binding and boot, at x across the stance. */
-export function createSki(x: number): THREE.Group {
-  const parts = sharedParts();
+export function createSki(x: number, style: SkiStyle = 'classic'): THREE.Group {
+  const parts = sharedParts(style);
   const ski = new THREE.Group();
 
   const body = new THREE.Mesh(parts.geometry, parts.materials);

@@ -8,7 +8,7 @@ import { PhysicalRide } from './physicalRide';
 import { Bottoms } from './bottoms';
 import { Top } from './top';
 import type { Outfit } from './progress';
-import { createSki } from './skiModel';
+import { createSki, type SkiStyle } from './skiModel';
 import { createBoardHalf, BOARD_STANCE, BOARD_LENGTH } from './boardModel';
 import { groundAt, railAt, type RailContact } from './rails';
 import {
@@ -503,16 +503,23 @@ export class Skier {
   /** Riding a snowboard (instead of skis). */
   board = false;
 
-  /** Swap skis for a snowboard or back. Takes effect from the next (re)start. */
-  setBoard(on: boolean): void {
-    if (on === this.board) return;
+  /** Which skis (when not on the board). */
+  private skiStyle: SkiStyle = 'classic';
+
+  /** Ride these: skis of a style, or the snowboard. Takes effect from the next (re)start. */
+  setGear(gear: SkiStyle | 'board'): void {
+    const on = gear === 'board';
+    if (!on) {
+      if (gear === this.skiStyle && !this.board) return;
+      this.skiStyle = gear;
+    } else if (this.board) return;
     this.board = on;
     this.person.setBoard(on);
     // A board floats on top of the powder (skis ride buried in it)
     this.person.group.position.y = on ? BOARD_FLOAT : 0;
     this.skis.position.y = on ? BOARD_FLOAT : 0;
     this.skis.remove(...this.skiModels);
-    this.skiModels.splice(0, 2, ...(on ? [createBoardHalf(0), createBoardHalf(1)] : [createSki(-STANCE), createSki(STANCE)]));
+    this.skiModels.splice(0, 2, ...(on ? [createBoardHalf(0), createBoardHalf(1)] : [createSki(-STANCE, this.skiStyle), createSki(STANCE, this.skiStyle)]));
     this.skis.add(...this.skiModels);
     if (this.ragdoll) {
       this.ragdoll.destroy();
