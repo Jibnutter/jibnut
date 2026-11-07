@@ -34,7 +34,6 @@ const DEFAULTS = { bottom: DEFAULT_BOTTOM, top: DEFAULT_TOP, gear: DEFAULT_GEAR 
 export const STORE: Item[] = [
   { id: 'black-pants', name: 'Black baggy snowpants', price: 1200, slot: 'bottom', kind: 'pants', color: 0x1b1c1f },
   { id: 'white-jacket', name: 'White windbreaker', price: 1000, slot: 'top', kind: 'jacket', color: 0xf4f5f2 },
-  { id: 'snowboard', name: 'Snowboard', price: 1500, slot: 'gear', kind: 'board', color: 0xff7a1c },
   { id: 'zebra-skis', name: 'Wide zebra skis', price: 4000, slot: 'gear', kind: 'wide-skis', color: 0xf4f4f1 },
 ];
 
@@ -44,7 +43,7 @@ export const ALL: Item[] = [DEFAULT_GEAR, DEFAULT_TOP, DEFAULT_BOTTOM, ...STORE]
 export interface Outfit {
   bottom: Item;
   top: Item;
-  /** Skis or the snowboard. */
+  /** Which skis. */
   gear: Item;
 }
 
@@ -74,6 +73,19 @@ function load(): Saved {
 }
 
 const state = load();
+
+/**
+ * Items taken out of the store: anyone who bought one gets their Nuts back
+ * (and is put back on the default in that slot).
+ */
+const RETIRED: { id: string; price: number; slot: Item['slot'] }[] = [{ id: 'snowboard', price: 1500, slot: 'gear' }];
+for (const r of RETIRED) {
+  if (!state.owned.includes(r.id)) continue;
+  state.owned = state.owned.filter((id) => id !== r.id);
+  state.nuts += r.price;
+  if (state.wearing[r.slot] === r.id) state.wearing[r.slot] = DEFAULTS[r.slot].id;
+  save();
+}
 
 function save(): void {
   try {
