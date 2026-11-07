@@ -121,8 +121,11 @@ interface FrameModel {
   front: THREE.Vector3; // its front axle (the fork's bottom)
   rear: THREE.Vector3; // its rear axle (the swingarm's end)
   grips: THREE.Vector3[]; // its bar ends, left and right
+  seat: THREE.Vector3; // the top of its seat tube (the model has no saddle: ours goes there)
 }
 let frameModel: FrameModel | null = null;
+const BAR_BAND = 0.045; // the top this much of the model's length is the bars
+const BAR_WIDEN = 1.5; // the bars' ends pulled out this much (about 0.6 m → 0.8 m wide)
 /** Whether the Tinkercad frame is loaded (the workshop offers it once it is). */
 export function hasFrameModel(): boolean {
   return !!frameModel;
@@ -151,6 +154,16 @@ export async function loadFrameModel(): Promise<void> {
   const box = geometry.boundingBox!;
   const len = box.max.x - box.min.x;
   const pos = geometry.attributes.position as THREE.BufferAttribute;
+  // Wider bars: the top band (the bars, above the stem and crown) pulled out
+  // sideways, the middle (the stem clamp) left as it is
+  const barsFrom = box.max.y - len * BAR_BAND;
+  const clamp = len * 0.065;
+  for (let i = 0; i < pos.count; i++) {
+    if (pos.getY(i) < barsFrom) continue;
+    const z = pos.getZ(i);
+    if (Math.abs(z) > clamp) pos.setZ(i, Math.sign(z) * (clamp + (Math.abs(z) - clamp) * BAR_WIDEN));
+  }
+  geometry.computeBoundingBox();
   const pts: THREE.Vector3[] = [];
   for (let i = 0; i < pos.count; i++) pts.push(new THREE.Vector3().fromBufferAttribute(pos, i));
   const mean = (a: THREE.Vector3[]) => a.reduce((s, p) => s.add(p), new THREE.Vector3()).divideScalar(Math.max(1, a.length));
@@ -160,7 +173,11 @@ export async function loadFrameModel(): Promise<void> {
   const rear = mean(pts.filter((p) => p.x < box.min.x + len * 0.02));
   const top = pts.filter((p) => p.y > box.max.y - len * 0.04);
   const grips = [top.reduce((m, p) => (p.z < m.z ? p : m)), top.reduce((m, p) => (p.z > m.z ? p : m))];
-  frameModel = { geometry, front, rear, grips };
+  // The seat tube's top: the highest point in the back half
+  const back = pts.filter((p) => p.x < box.min.x + len * 0.55);
+  const peak = back.reduce((m, p) => (p.y > m.y ? p : m));
+  const seat = mean(back.filter((p) => p.y > peak.y - len * 0.02));
+  frameModel = { geometry, front, rear, grips, seat };
 }
 
 /**
@@ -509,6 +526,17 @@ function buildMine(d: BikeDesign, bike: THREE.Group): THREE.Group {
   cranks.add(ring);
   for (const side of [-1, 1]) cranks.add(tube(new THREE.Vector3(side * 0.05, 0, 0), new THREE.Vector3(side * 0.07, side * 0.17, 0), 0.012, m.black));
   bike.add(cranks);
+  // A seat: a post up from the seat tube's top, and a saddle on it
+  const seatTop = frameModel!.seat.clone().applyMatrix4(frameTransform(d));
+  const postTop = seatTop.clone().add(new THREE.Vector3(0, 0.07, 0.015));
+  bike.add(tube(seatTop, postTop, 0.016, m.black));
+  const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.04, 0.27), m.black);
+  saddle.position.copy(postTop).add(new THREE.Vector3(0, 0.025, 0.02));
+  saddle.castShadow = true;
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.035, 0.1), m.black);
+  nose.position.copy(saddle.position).add(new THREE.Vector3(0, -0.003, -0.15));
+  nose.castShadow = true;
+  bike.add(saddle, nose);
   return bike;
 }
 
