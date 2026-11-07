@@ -28,8 +28,14 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 
 // Ambient occlusion: a small radius, for contact detail (the terrain's big
 // shapes already have their occlusion baked in)
-const AO = { radius: 0.7, distanceExponent: 1, thickness: 2, scale: 1.6, samples: 16 };
+// (Small radius and thin: wider settings put grain on the clothes, thin
+// cloth close to the body, which shimmered as the rider moved)
+const AO = { radius: 0.5, distanceExponent: 1, thickness: 1, scale: 1, samples: 24 };
 const AO_STRENGTH = 1;
+// Denoising the AO: a wider, gentler blur. With the defaults the AO's
+// sampling noise showed as grain on the clothes (thin cloth close to the
+// body), shimmering as the rider moved, so the fabric looked rough.
+const AO_DENOISE = { radius: 16, samples: 16, rings: 3, lumaPhi: 5, depthPhi: 3, normalPhi: 2 };
 // Bloom: in HDR, before tone mapping, so the threshold is in light units:
 // only what's much brighter than lit snow glows
 const BLOOM = { strength: 0.18, radius: 0.4, threshold: 9 };
@@ -50,6 +56,7 @@ export class Post {
 
     this.gtao = new GTAOPass(scene, camera, size.x, size.y);
     this.gtao.updateGtaoMaterial(AO);
+    this.gtao.updatePdMaterial(AO_DENOISE);
     this.gtao.blendIntensity = AO_STRENGTH;
     this.composer.addPass(this.gtao);
 
