@@ -10,7 +10,7 @@
 
 import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
-import { loadMaps, decodeSculpt, SCULPT, GRID_W, GRID_H, type CustomMap } from './customMaps';
+import { loadMaps, decodeSculpt, SCULPT, GRID_W, GRID_H, MAP_BUILDER_ENABLED, type CustomMap } from './customMaps';
 
 /**
  * The maps. Each is one mountain the course runs down, along -Z
@@ -292,7 +292,7 @@ function customDef(map: CustomMap): MapDef {
 
 const CUSTOM_MAPS = loadMaps();
 
-export const MAPS: MapInfo[] = [JUMPLINE, BACKCOUNTRY, ...CUSTOM_MAPS.map(customDef)].map(
+export const MAPS: MapInfo[] = [JUMPLINE, BACKCOUNTRY, ...(MAP_BUILDER_ENABLED ? CUSTOM_MAPS.map(customDef) : [])].map(
   ({ id, name, description, features }) => ({ id, name, description, features }),
 );
 
@@ -300,7 +300,7 @@ export const MAPS: MapInfo[] = [JUMPLINE, BACKCOUNTRY, ...CUSTOM_MAPS.map(custom
 export const CUSTOM: CustomMap | null = (() => {
   const loc = (globalThis as { location?: { search: string } }).location;
   const id = loc ? new URLSearchParams(loc.search).get('map') : null;
-  return CUSTOM_MAPS.find((m) => m.id === id) ?? null;
+  return MAP_BUILDER_ENABLED ? (CUSTOM_MAPS.find((m) => m.id === id) ?? null) : null;
 })();
 
 /** The map this page load runs (?map=<id>; Jumpline if none). */

@@ -17,6 +17,13 @@
  * under the map's id.
  */
 
+/**
+ * The map builder is switched off for now: its menu page is hidden and
+ * built maps aren't listed on the Maps page. (Nothing is deleted: saved
+ * maps stay in the browser, ready for when it's switched back on.)
+ */
+export const MAP_BUILDER_ENABLED = false;
+
 /** The editable area: x from -HALF_X to HALF_X, z from TOP_Z down to BOTTOM_Z, on a grid of CELL. */
 export const SCULPT = { halfX: 150, topZ: 20, bottomZ: -640, cell: 2 };
 export const GRID_W = Math.round((2 * SCULPT.halfX) / SCULPT.cell) + 1;

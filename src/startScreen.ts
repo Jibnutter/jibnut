@@ -9,7 +9,7 @@
 // file for details.
 
 import { MAP, MAPS, CUSTOM } from './terrain';
-import { loadMaps, newMap, deleteMap } from './customMaps';
+import { loadMaps, newMap, deleteMap, MAP_BUILDER_ENABLED } from './customMaps';
 import * as progress from './progress';
 
 export type Page = 'main' | 'maps' | 'builder' | 'locker' | 'store' | 'controls';
@@ -45,7 +45,7 @@ export class StartScreen {
         <div class="nuts" title="Nuts: earned by finishing runs (half your score)"><span class="nut-icon" aria-hidden="true"></span><span class="nut-count">0</span> Nuts</div>
         <nav class="menu">
           <button type="button" data-go="maps">Maps</button>
-          <button type="button" data-go="builder">Map builder</button>
+          ${MAP_BUILDER_ENABLED ? '<button type="button" data-go="builder">Map builder</button>' : ''}
           <button type="button" data-go="locker">Locker</button>
           <button type="button" data-go="store">Store</button>
           <button type="button" data-go="controls">Controls</button>
