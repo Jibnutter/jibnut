@@ -119,6 +119,7 @@ export class StartScreen {
           <dt><kbd>S</kbd></dt><dd>Tuck or arch: flip faster</dd>
           <dt><kbd>A</kbd> / <kbd>D</kbd></dt><dd>Arms in: spin faster</dd>
           <dt><kbd>W</kbd></dt><dd>Open up and spot the landing</dd>
+          <dt><kbd>Left Shift</kbd></dt><dd>Hold: shifty (skis twisted one way, shoulders the other)</dd>
           <dt><kbd>Space</kbd></dt><dd>Hold: X tail grab (skis crossed, right hand on the right tail). Let go before you land!</dd>
           <dt class="group">Rails</dt><dd class="group"></dd>
           <dt><kbd>A</kbd> / <kbd>D</kbd></dt><dd>Swing the skis across for a boardslide</dd>

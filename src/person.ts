@@ -82,17 +82,18 @@ export interface Pose {
   twist: number; // upper body turned about the spine, radians (+ = to the left)
   look: number; // head turned over a shoulder: +1 = fully over the left, -1 = over the right
   grab: number; // 0..1: the X tail grab (skis crossed, right hand on the right ski's tail; see GRAB)
+  shifty: number; // -1..1: a shifty (skis turned one way, shoulders the other; see SHIFTY)
 }
 
 // hipBack values are solved so the centre of mass (body + skis) sits right
 // over the feet, except the two leans: 8 cm behind / ahead of the feet.
-export const RIDING: Pose = { hipHeight: 0.86, hipBack: 0.14, torsoPitch: 0.35, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
-export const TUCK: Pose = { hipHeight: 0.62, hipBack: 0.27, torsoPitch: 1.0, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
-export const CROUCH: Pose = { hipHeight: 0.6, hipBack: 0.23, torsoPitch: 0.7, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
-export const AIR: Pose = { hipHeight: 0.78, hipBack: 0.12, torsoPitch: 0.3, lean: 0, armsOut: 1, twist: 0, look: 0, armsUp: 0, grab: 0 };
+export const RIDING: Pose = { hipHeight: 0.86, hipBack: 0.14, torsoPitch: 0.35, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0, shifty: 0 };
+export const TUCK: Pose = { hipHeight: 0.62, hipBack: 0.27, torsoPitch: 1.0, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0, shifty: 0 };
+export const CROUCH: Pose = { hipHeight: 0.6, hipBack: 0.23, torsoPitch: 0.7, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0, shifty: 0 };
+export const AIR: Pose = { hipHeight: 0.78, hipBack: 0.12, torsoPitch: 0.3, lean: 0, armsOut: 1, twist: 0, look: 0, armsUp: 0, grab: 0, shifty: 0 };
 // Loading a jump with weight shifted: back (for a backflip) or forward
-export const LEAN_BACK: Pose = { hipHeight: 0.62, hipBack: 0.23, torsoPitch: 0.25, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
-export const LEAN_FORWARD: Pose = { hipHeight: 0.62, hipBack: 0.18, torsoPitch: 1.05, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
+export const LEAN_BACK: Pose = { hipHeight: 0.62, hipBack: 0.23, torsoPitch: 0.25, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0, shifty: 0 };
+export const LEAN_FORWARD: Pose = { hipHeight: 0.62, hipBack: 0.18, torsoPitch: 1.05, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0, shifty: 0 };
 // In the air: pulled into a tight ball (rotates fast) or stretched out (slow)
 // Backflip arch: the whole body bowed backwards like a banana. Legs straight
 // and trailing (hips pushed forward of the feet; hip height past full leg
@@ -100,18 +101,18 @@ export const LEAN_FORWARD: Pose = { hipHeight: 0.62, hipBack: 0.18, torsoPitch: 
 // towards the top, head back, arms reaching up over the head along the arch.
 // Far less compact than the forward ball: the skier flips as fast as with
 // the ball anyway (see Skier.updateMass), so backflip tricks stay as tuned.
-export const AIR_ARCH: Pose = { hipHeight: 1.05, hipBack: -0.25, torsoPitch: -0.7, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 1, grab: 0 };
-export const AIR_TUCK: Pose = { hipHeight: 0.42, hipBack: 0.27, torsoPitch: 1.0, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
+export const AIR_ARCH: Pose = { hipHeight: 1.05, hipBack: -0.25, torsoPitch: -0.7, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 1, grab: 0, shifty: 0 };
+export const AIR_TUCK: Pose = { hipHeight: 0.42, hipBack: 0.27, torsoPitch: 1.0, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0, shifty: 0 };
 // In the air, upright with arms hugged in: the fastest shape for spinning
-export const AIR_SPIN: Pose = { hipHeight: 0.86, hipBack: 0.07, torsoPitch: 0.1, lean: 0, armsOut: -1, twist: 0, look: 0, armsUp: 0, grab: 0 };
+export const AIR_SPIN: Pose = { hipHeight: 0.86, hipBack: 0.07, torsoPitch: 0.1, lean: 0, armsOut: -1, twist: 0, look: 0, armsUp: 0, grab: 0, shifty: 0 };
 // The X tail grab: crouched, knees up, the skis crossed into an X, the right
 // foot pulled up with its ski's tail tilted up, and the right hand reaching
 // down beside the hip to hold it. (The legs and skis are placed by GRAB.)
-export const AIR_GRAB: Pose = { hipHeight: 0.66, hipBack: 0.16, torsoPitch: 0.4, lean: -0.3, armsOut: 0.6, twist: -0.35, look: 0, armsUp: 0, grab: 1 };
+export const AIR_GRAB: Pose = { hipHeight: 0.66, hipBack: 0.16, torsoPitch: 0.4, lean: -0.3, armsOut: 0.6, twist: -0.35, look: 0, armsUp: 0, grab: 1, shifty: 0 };
 // Snowboard grab (an Indy): knees pulled up, crouched, the back hand
 // reaching down to the toe edge between the bindings. (Feet placed by pose.)
-export const AIR_INDY: Pose = { hipHeight: 0.66, hipBack: 0.18, torsoPitch: 1.0, lean: 0, armsOut: 0.6, twist: 0.5, look: 0, armsUp: 0, grab: 1 };
-export const AIR_OPEN: Pose = { hipHeight: 0.98, hipBack: 0.01, torsoPitch: -0.05, lean: 0, armsOut: 1, twist: 0, look: 0, armsUp: 0, grab: 0 };
+export const AIR_INDY: Pose = { hipHeight: 0.66, hipBack: 0.18, torsoPitch: 1.0, lean: 0, armsOut: 0.6, twist: 0.5, look: 0, armsUp: 0, grab: 1, shifty: 0 };
+export const AIR_OPEN: Pose = { hipHeight: 0.98, hipBack: 0.01, torsoPitch: -0.05, lean: 0, armsOut: 1, twist: 0, look: 0, armsUp: 0, grab: 0, shifty: 0 };
 
 export function lerpPose(a: Pose, b: Pose, t: number, out: Pose): Pose {
   out.hipHeight = a.hipHeight + (b.hipHeight - a.hipHeight) * t;
@@ -123,6 +124,7 @@ export function lerpPose(a: Pose, b: Pose, t: number, out: Pose): Pose {
   out.twist = a.twist + (b.twist - a.twist) * t;
   out.look = a.look + (b.look - a.look) * t;
   out.grab = a.grab + (b.grab - a.grab) * t;
+  out.shifty = a.shifty + (b.shifty - a.shifty) * t;
   return out;
 }
 
@@ -186,6 +188,8 @@ export const GRAB = {
   /** Where the hand holds the right ski: along it from the boot (+ = towards the tail), and above its base. */
   hold: { along: 0.5, up: 0.03 },
 };
+/** A shifty at full strength: skis turned this far (rad, + = tips left), shoulders back the other way. */
+export const SHIFTY = { skis: 0.75, shoulders: 0.55 };
 /** On a board, the grab pulls both feet up this far. */
 const BOARD_GRAB_LIFT = 0.26;
 /** The ski's origin (its base, under the boot) sits this far below the ankle. */
@@ -496,7 +500,8 @@ export class Person {
       // The grab: on skis, feet and skis move to the X; on a board both feet
       // come up together (blended in by p.grab)
       const g = p.grab;
-      const skiYaw = this.board ? 0 : GRAB.yaw[i] * g;
+      // (A shifty turns both legs and skis together, from the hips)
+      const skiYaw = this.board ? 0 : GRAB.yaw[i] * g + p.shifty * SHIFTY.skis;
       if (g > 0) {
         if (this.board) j.ankles[i].y += BOARD_GRAB_LIFT * g;
         else j.ankles[i].lerp(i === 1 ? GRAB.rightAnkle : GRAB.leftAnkle, g);

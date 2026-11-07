@@ -38,6 +38,7 @@ import {
   AIR_SPIN,
   LEAN_BACK,
   LEAN_FORWARD,
+  SHIFTY,
   lerpPose,
   type Pose,
   type MassProperties,
@@ -182,7 +183,7 @@ function trickName(spin: number, pitch: number, fromSwitch: boolean): string {
 }
 // Points: each flip (back or front), each full spin (a 180 scores half),
 // and holding a grab
-const POINTS = { flip: 200, spin360: 100, grab: 50 };
+const POINTS = { flip: 200, spin360: 100, grab: 50, shifty: 50 };
 
 /** What a landed trick scores (rounded the same way as its name). */
 function trickPoints(spin: number, pitch: number, grabbed: boolean): number {
@@ -326,6 +327,9 @@ export class Skier {
   private flipMomentum = 0;
   /** How long the grab has been held this jump (s). */
   private grabTime = 0;
+  /** How long a shifty has been held this jump (s), and the way it twists. */
+  private shiftyTime = 0;
+  private shiftySide = 1;
   /**
    * Crashes on (the default) or off. Off, nothing ends a run: bad landings
    * are ridden away, walls just stop you, and the body touching the snow is
@@ -598,6 +602,7 @@ export class Skier {
     this.bumpStore = 0;
     this.hasRideDir = false;
     this.grabTime = 0;
+    this.shiftyTime = 0;
     this.jumpLocked = false;
     this.skid = 0;
     this.prevSkid = 0;
@@ -766,6 +771,8 @@ export class Skier {
       }
       // Start counting tricks for this jump
       this.grabTime = 0;
+    this.shiftyTime = 0;
+      this.shiftyTime = 0;
       this.airSpin = 0;
       this.pitch = 0;
       this.airTime = 0;
@@ -793,6 +800,7 @@ export class Skier {
     } else if (!this.grounded) {
       this.airTime += dt;
       if (this.current.grab >= GRAB_HELD) this.grabTime += dt;
+      if (Math.abs(this.current.shifty) >= GRAB_HELD) this.shiftyTime += dt;
       const feet = this.stance.getWorldPosition(tmpFeetW);
       const skisDown = this.airTime > SKI_GRACE && this.velocity.y < 0 && this.skisHitSnow();
       // The feet only mean "feet on the snow" when roughly upright; upside
@@ -1422,10 +1430,12 @@ export class Skier {
     }
     this.lastGrind = { time: 0, across: 0 };
     const grabbed = this.grabTime >= MIN_GRAB;
+    const shifty = this.shiftyTime >= MIN_GRAB;
     let trick = trickName(this.airSpin, pitch, this.takeoffSwitch);
     const grabName = this.board ? 'Indy' : 'X-Tail';
     if (grabbed) trick = trick ? `${trick} ${grabName}` : grabName;
-    const points = trickPoints(this.airSpin, pitch, grabbed);
+    if (shifty) trick = trick ? `${trick} Shifty` : 'Shifty';
+    const points = trickPoints(this.airSpin, pitch, grabbed) + (shifty ? POINTS.shifty : 0);
     if (saved) {
       // A crash ridden away (crashes off): half points
       this.onLand?.(trick ? `Sketchy ${trick}` : 'Sketchy', false, Math.round(points / 2));
@@ -1610,11 +1620,19 @@ export class Skier {
       else if (this.weight < 0) lerpPose(t, LEAN_FORWARD, -this.weight, t);
     }
     t.lean = this.lean;
+    // Shifty (Left Shift, in the air): skis twisted one way, shoulders the
+    // other, held as long as the key is; it springs back when let go. It
+    // twists against the way you're spinning (or to the right if not).
+    if (!this.grounded && input.shifty) {
+      if (this.current.shifty === 0 || Math.abs(this.current.shifty) < 0.05) this.shiftySide = this.spinRate > 0.3 ? -1 : 1;
+      t.shifty = this.shiftySide;
+    } else t.shifty = 0;
     // Wind-up shows as shoulders turned back against the coming spin
     t.twist = this.grounded ? -this.windup * WINDUP_TWIST : 0;
     // Switch: shoulders open up towards the look, head turns the rest
     t.look = this.switchStance && this.grounded ? this.lookSide : 0;
     t.twist += t.look * SWITCH_TWIST;
+    t.twist -= t.shifty * SHIFTY.shoulders * 2; // (shoulders turned against the skis)
     if (this.board) {
       // Sideways on the board: shoulders opened a little towards the nose
       // (the tail, riding switch) and the head turned to look where we're

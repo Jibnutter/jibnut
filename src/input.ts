@@ -27,6 +27,8 @@ export interface Controls {
   brake: boolean;
   /** Held to charge a jump; the jump fires on release. */
   jump: boolean;
+  /** In the air: a shifty (held). */
+  shifty?: boolean;
 }
 
 export function readControls(): Controls {
@@ -36,5 +38,6 @@ export function readControls(): Controls {
     tuck: held('KeyW', 'ArrowUp'),
     brake: held('KeyS', 'ArrowDown'),
     jump: held('Space'),
+    shifty: held('ShiftLeft'),
   };
 }
