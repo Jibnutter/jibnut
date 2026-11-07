@@ -10,7 +10,7 @@
 
 import { MAP, MAPS, CUSTOM } from './terrain';
 import { loadMaps, newMap, deleteMap, MAP_BUILDER_ENABLED } from './customMaps';
-import { DESIGN_RANGES, DEFAULT_DESIGN } from './bikeModel';
+import { DESIGN_RANGES, DEFAULT_DESIGN, hasFrameModel } from './bikeModel';
 import * as progress from './progress';
 
 export type Page = 'main' | 'maps' | 'builder' | 'locker' | 'workshop' | 'store' | 'controls';
@@ -332,7 +332,7 @@ export class StartScreen {
     const choice = (key: string, options: [string, string][]) =>
       `<div class="choice-row">${options.map(([v, l]) => `<button type="button" class="opt" data-key="${key}" data-value="${v}">${l}</button>`).join('')}</div>`;
     box.innerHTML = `
-      <div class="field"><div class="field-name">Style</div>${choice('style', [['trail', 'Trail'], ['downhill', 'Downhill']])}</div>
+      <div class="field"><div class="field-name">Style</div>${choice('style', [['trail', 'Trail'], ['downhill', 'Downhill'], ...(hasFrameModel() ? [['mine', 'My frame'] as [string, string]] : [])])}</div>
       <div class="field"><div class="field-name">Frame colour</div>${swatches('frameColor', frameColors)}</div>
       <div class="field"><div class="field-name">Fork colour</div>${swatches('forkColor', forkColors)}</div>
       ${slider('headAngle', 'Head angle', deg)}

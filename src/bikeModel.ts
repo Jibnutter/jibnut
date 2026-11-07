@@ -55,7 +55,7 @@ export interface BikeDesign {
    * triangle driven by two short links round the bottom bracket, a boxy
    * swingarm and more travel.
    */
-  style: 'trail' | 'downhill';
+  style: 'trail' | 'downhill' | 'mine';
 }
 
 export const DEFAULT_DESIGN: BikeDesign = {
@@ -110,8 +110,92 @@ function geometry(d: BikeDesign) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// "My frame": a frame modelled in Tinkercad (src/models/tinkercad-frame.glb),
+// one solid piece with its own colours: frame, swingarm, shock, fork, bars.
+// It's scaled and placed so its fork bottom and rear dropout land on the
+// wheel axles; the game's own wheels, cranks and pedals go with it.
+
+interface FrameModel {
+  geometry: THREE.BufferGeometry; // in the model's own space (Tinkercad mm, y up)
+  front: THREE.Vector3; // its front axle (the fork's bottom)
+  rear: THREE.Vector3; // its rear axle (the swingarm's end)
+  grips: THREE.Vector3[]; // its bar ends, left and right
+}
+let frameModel: FrameModel | null = null;
+/** Whether the Tinkercad frame is loaded (the workshop offers it once it is). */
+export function hasFrameModel(): boolean {
+  return !!frameModel;
+}
+
+/** Load the Tinkercad frame (once, at startup). */
+export async function loadFrameModel(): Promise<void> {
+  const [{ GLTFLoader }, { mergeGeometries }, { default: url }] = await Promise.all([
+    import('three/addons/loaders/GLTFLoader.js'),
+    import('three/addons/utils/BufferGeometryUtils.js'),
+    import('./models/tinkercad-frame.glb?url'),
+  ]);
+  const gltf = await new GLTFLoader().loadAsync(url);
+  gltf.scene.updateMatrixWorld(true);
+  const parts: THREE.BufferGeometry[] = [];
+  gltf.scene.traverse((o) => {
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    const g = mesh.geometry.clone().applyMatrix4(mesh.matrixWorld);
+    for (const name of Object.keys(g.attributes)) if (name !== 'position' && name !== 'normal' && name !== 'color') g.deleteAttribute(name);
+    parts.push(g);
+  });
+  const geometry = mergeGeometries(parts);
+  // Its key points: bike pointing along +x, up +y
+  geometry.computeBoundingBox();
+  const box = geometry.boundingBox!;
+  const len = box.max.x - box.min.x;
+  const pos = geometry.attributes.position as THREE.BufferAttribute;
+  const pts: THREE.Vector3[] = [];
+  for (let i = 0; i < pos.count; i++) pts.push(new THREE.Vector3().fromBufferAttribute(pos, i));
+  const mean = (a: THREE.Vector3[]) => a.reduce((s, p) => s.add(p), new THREE.Vector3()).divideScalar(Math.max(1, a.length));
+  const nose = pts.filter((p) => p.x > box.max.x - len * 0.2);
+  const lowest = Math.min(...nose.map((p) => p.y));
+  const front = mean(nose.filter((p) => p.y < lowest + len * 0.012));
+  const rear = mean(pts.filter((p) => p.x < box.min.x + len * 0.02));
+  const top = pts.filter((p) => p.y > box.max.y - len * 0.04);
+  const grips = [top.reduce((m, p) => (p.z < m.z ? p : m)), top.reduce((m, p) => (p.z > m.z ? p : m))];
+  frameModel = { geometry, front, rear, grips };
+}
+
+/**
+ * The transform taking the Tinkercad model into the bike's frame (BB at the
+ * origin, forward -z): a quarter turn (its +x forward becomes -z), then a
+ * scale, tilt and shift so its front and rear axles land on the design's.
+ */
+function frameTransform(d: BikeDesign): THREE.Matrix4 {
+  const fm = frameModel!;
+  const g = geometry(d);
+  const turn = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+  const f = fm.front.clone().applyMatrix4(turn);
+  const r = fm.rear.clone().applyMatrix4(turn);
+  const from = f.clone().sub(r);
+  const to = g.frontAxle.clone().sub(g.rearAxle);
+  const scale = to.length() / from.length();
+  const tilt = new THREE.Quaternion().setFromUnitVectors(from.clone().normalize(), to.clone().normalize());
+  const m = new THREE.Matrix4().compose(new THREE.Vector3(), tilt, new THREE.Vector3(scale, scale, scale)).multiply(turn);
+  // Shift: the rear axle onto the design's
+  const rNow = fm.rear.clone().applyMatrix4(m);
+  return new THREE.Matrix4().makeTranslation(g.rearAxle.x - rNow.x, g.rearAxle.y - rNow.y, g.rearAxle.z - rNow.z).multiply(m);
+}
+
 /** Where the hands hold the bars (in half 0's frame): left and right grips. */
 export function gripsFor(d: BikeDesign): THREE.Vector3[] {
+  if (d.style === 'mine' && frameModel) {
+    // The model's own bar ends (pulled in a little: hands sit inside the ends)
+    const m = frameTransform(d);
+    return frameModel.grips.map((p) => {
+      const v = p.clone().applyMatrix4(m);
+      v.x *= 0.88;
+      v.x += PEDAL_X;
+      return v;
+    });
+  }
   const c = geometry(d).barCentre;
   return [-1, 1].map((s) => new THREE.Vector3(PEDAL_X + s * 0.37, c.y + 0.02, c.z));
 }
@@ -215,6 +299,7 @@ export function buildBike(d: BikeDesign = DEFAULT_DESIGN): THREE.Group {
   const k = G.tube; // tube thickness
   const bike = new THREE.Group();
   bike.userData.forkAxis = FORK_AXIS;
+  if (d.style === 'mine' && frameModel) return buildMine(d, bike);
   const dh = d.style === 'downhill';
   bike.userData.forkTravel = dh ? FORK_TRAVEL_DH : FORK_TRAVEL;
   bike.userData.rearTravel = dh ? REAR_TRAVEL_ANGLE_DH : REAR_TRAVEL_ANGLE;
@@ -379,6 +464,54 @@ export function buildBike(d: BikeDesign = DEFAULT_DESIGN): THREE.Group {
   return bike;
 }
 
+/**
+ * The Tinkercad frame (rigid: it's one piece, so the fork and swingarm don't
+ * move), with the game's wheels at its axles, cranks at the BB.
+ */
+function buildMine(d: BikeDesign, bike: THREE.Group): THREE.Group {
+  const g = geometry(d);
+  const frame = new THREE.Mesh(
+    frameModel!.geometry.clone().applyMatrix4(frameTransform(d)),
+    new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.1 }),
+  );
+  frame.geometry.computeVertexNormals();
+  frame.castShadow = true;
+  bike.add(frame);
+  bike.userData.forkTravel = 0;
+  bike.userData.rearTravel = 0;
+  bike.userData.noSteer = true;
+  // The wheels (rolling), in the groups animateBike looks for
+  const front = new THREE.Group();
+  front.name = 'front';
+  front.userData.axis = g.steer.clone();
+  const lowers = new THREE.Group();
+  lowers.name = 'lowers';
+  const fw = wheel(g.wheelR);
+  fw.name = 'frontWheel';
+  fw.position.copy(g.frontAxle);
+  lowers.add(fw);
+  front.add(lowers);
+  bike.add(front);
+  const swing = new THREE.Group();
+  swing.name = 'swing';
+  const rw = wheel(g.wheelR);
+  rw.name = 'rearWheel';
+  rw.position.copy(g.rearAxle);
+  swing.add(rw);
+  bike.add(swing);
+  // Cranks, turning at the BB
+  const m = sharedMats;
+  const cranks = new THREE.Group();
+  cranks.name = 'cranks';
+  const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.008, 24), m.black);
+  ring.rotation.z = Math.PI / 2;
+  ring.position.x = 0.05;
+  cranks.add(ring);
+  for (const side of [-1, 1]) cranks.add(tube(new THREE.Vector3(side * 0.05, 0, 0), new THREE.Vector3(side * 0.07, side * 0.17, 0), 0.012, m.black));
+  bike.add(cranks);
+  return bike;
+}
+
 /** Flat pedal under a boot (at the half's origin), with the boot on it. */
 function pedal(): THREE.Group {
   const m = sharedMats;
@@ -421,7 +554,7 @@ export function animateBike(half: THREE.Object3D, roll: number, steer: number, s
   const bike = half.getObjectByName('bike');
   if (!bike) return;
   const front = bike.getObjectByName('front')!;
-  front.quaternion.setFromAxisAngle(front.userData.axis as THREE.Vector3, steer);
+  front.quaternion.setFromAxisAngle(front.userData.axis as THREE.Vector3, bike.userData.noSteer ? 0 : steer);
   const lowers = bike.getObjectByName('lowers')!;
   lowers.position.copy(bike.userData.forkAxis as THREE.Vector3).multiplyScalar(squash * (bike.userData.forkTravel as number));
   bike.getObjectByName('frontWheel')!.rotation.x = -roll;
@@ -430,7 +563,8 @@ export function animateBike(half: THREE.Object3D, roll: number, steer: number, s
   bike.getObjectByName('rearWheel')!.rotation.x = -roll;
   bike.getObjectByName('cranks')!.rotation.x = -crank;
   // The shock: from its frame mount to the rocker, wherever the swingarm is
-  const shock = bike.getObjectByName('shock')!;
+  const shock = bike.getObjectByName('shock');
+  if (!shock) return; // (the Tinkercad frame has its own, fixed)
   const top = shock.userData.top as THREE.Vector3;
   const rocker = tmpA.copy(shock.userData.rocker as THREE.Vector3).applyEuler(swing.rotation).add(swing.position);
   const d = tmpB.subVectors(rocker, top);
