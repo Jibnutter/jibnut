@@ -10,6 +10,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { createForest } from './trees';
 import {
   heightAt,
   courseX,
@@ -197,31 +198,7 @@ function createTrees(): THREE.Group {
     spots.push(new THREE.Vector3(x, heightAt(x, z), z));
   }
 
-  const foliage = mergeGeometries([
-    new THREE.ConeGeometry(2.2, 4.5, 8).translate(0, 3.5, 0),
-    new THREE.ConeGeometry(1.7, 3.8, 8).translate(0, 5.6, 0),
-    new THREE.ConeGeometry(1.1, 3, 8).translate(0, 7.6, 0),
-  ]);
-  const trunk = new THREE.CylinderGeometry(0.25, 0.35, 2, 6).translate(0, 1, 0);
-  const leaves = new THREE.InstancedMesh(foliage, new THREE.MeshStandardMaterial({ color: 0x2f5a3c, roughness: 0.9 }), spots.length);
-  const wood = new THREE.InstancedMesh(trunk, new THREE.MeshStandardMaterial({ color: 0x4a3426, roughness: 0.9 }), spots.length);
-  leaves.castShadow = wood.castShadow = true; // (long shadows across the snow)
-  const m = new THREE.Matrix4();
-  const q = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  const tint = new THREE.Color();
-  spots.forEach((p, i) => {
-    const s = 0.7 + rand() * 0.8;
-    q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rand() * Math.PI * 2);
-    m.compose(p, q, scale.set(s, s * (0.9 + rand() * 0.3), s));
-    leaves.setMatrixAt(i, m);
-    wood.setMatrixAt(i, m);
-    // A little variety in the greens, some with a dusting of snow
-    leaves.setColorAt(i, tint.setHSL(0.38 + rand() * 0.05, 0.3 + rand() * 0.15, 0.22 + rand() * 0.12));
-  });
-  const group = new THREE.Group();
-  group.add(leaves, wood);
-  return group;
+  return createForest(spots);
 }
 
 // ---------------------------------------------------------------------------
