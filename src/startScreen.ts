@@ -332,6 +332,7 @@ export class StartScreen {
     const choice = (key: string, options: [string, string][]) =>
       `<div class="choice-row">${options.map(([v, l]) => `<button type="button" class="opt" data-key="${key}" data-value="${v}">${l}</button>`).join('')}</div>`;
     box.innerHTML = `
+      <div class="field"><div class="field-name">Style</div>${choice('style', [['trail', 'Trail'], ['downhill', 'Downhill']])}</div>
       <div class="field"><div class="field-name">Frame colour</div>${swatches('frameColor', frameColors)}</div>
       <div class="field"><div class="field-name">Fork colour</div>${swatches('forkColor', forkColors)}</div>
       ${slider('headAngle', 'Head angle', deg)}
@@ -344,7 +345,7 @@ export class StartScreen {
       <button type="button" class="opt reset" data-reset="1">Reset to stock</button>`;
     const set = (key: string, value: string | number) => {
       const d = progress.bikeDesign() as unknown as Record<string, unknown>;
-      d[key] = typeof value === 'string' && key !== 'tubes' && key !== 'topTube' ? Number(value) : value;
+      d[key] = typeof value === 'string' && key !== 'tubes' && key !== 'topTube' && key !== 'style' ? Number(value) : value;
       progress.setBikeDesign(d as unknown as ReturnType<typeof progress.bikeDesign>);
     };
     box.addEventListener('click', (e) => {

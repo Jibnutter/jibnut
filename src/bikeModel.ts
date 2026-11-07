@@ -32,6 +32,8 @@ const TIRE = 0.034;
 export const BIKE_MASS = 14;
 const FORK_TRAVEL = 0.12;
 const REAR_TRAVEL_ANGLE = 0.22; // rad of swingarm at full squash
+const FORK_TRAVEL_DH = 0.18; // a downhill bike's longer travel
+const REAR_TRAVEL_ANGLE_DH = 0.32;
 
 /**
  * A frame design (from the bike workshop). Lengths in metres from the
@@ -47,6 +49,13 @@ export interface BikeDesign {
   wheel: 27.5 | 29; // wheel size (inches)
   tubes: 'slim' | 'normal' | 'burly';
   topTube: 'straight' | 'dropped';
+  /**
+   * Trail: a single-crown fork and a shock up in the frame. Downhill: a
+   * dual-crown fork, a low bent top tube, the shock low in the front
+   * triangle driven by two short links round the bottom bracket, a boxy
+   * swingarm and more travel.
+   */
+  style: 'trail' | 'downhill';
 }
 
 export const DEFAULT_DESIGN: BikeDesign = {
@@ -59,6 +68,7 @@ export const DEFAULT_DESIGN: BikeDesign = {
   wheel: 29,
   tubes: 'normal',
   topTube: 'straight',
+  style: 'trail',
 };
 
 export const DESIGN_RANGES = {
@@ -135,6 +145,16 @@ function materials(d: BikeDesign = DEFAULT_DESIGN) {
   };
 }
 
+/** A flat-sided bar between two points (boxy frame members): w across, h deep. */
+function box(a: THREE.Vector3, b: THREE.Vector3, w: number, h: number, mat: THREE.Material): THREE.Mesh {
+  const d = b.clone().sub(a);
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, d.length(), h), mat);
+  m.position.copy(a).addScaledVector(d, 0.5);
+  m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.normalize());
+  m.castShadow = true;
+  return m;
+}
+
 /** A tube between two points. */
 function tube(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material, r2 = r): THREE.Mesh {
   const d = b.clone().sub(a);
@@ -195,10 +215,21 @@ export function buildBike(d: BikeDesign = DEFAULT_DESIGN): THREE.Group {
   const k = G.tube; // tube thickness
   const bike = new THREE.Group();
   bike.userData.forkAxis = FORK_AXIS;
+  const dh = d.style === 'downhill';
+  bike.userData.forkTravel = dh ? FORK_TRAVEL_DH : FORK_TRAVEL;
+  bike.userData.rearTravel = dh ? REAR_TRAVEL_ANGLE_DH : REAR_TRAVEL_ANGLE;
 
   // Front triangle (frame)
-  bike.add(tube(new THREE.Vector3(0, 0, 0), HEAD_BOTTOM, 0.03 * k, m.frame, 0.026 * k)); // down tube
-  if (d.topTube === 'dropped') {
+  bike.add(tube(new THREE.Vector3(0, 0, 0), HEAD_BOTTOM, 0.03 * k * (dh ? 1.15 : 1), m.frame, 0.026 * k * (dh ? 1.15 : 1))); // down tube
+  if (dh) {
+    // Downhill: a top tube that bends down from the head tube to a short
+    // seat tube, with a brace from the bend to the down tube
+    const bend = HEAD_TOP.clone().lerp(SEAT_TOP, 0.55).add(new THREE.Vector3(0, -0.03, 0));
+    const seatLow = SEAT_TOP.clone().multiplyScalar(0.78);
+    bike.add(tube(HEAD_TOP, bend, 0.026 * k, m.frame));
+    bike.add(tube(bend, seatLow, 0.024 * k, m.frame));
+    bike.add(tube(bend, new THREE.Vector3(0, 0.2, -0.24), 0.017 * k, m.frame));
+  } else if (d.topTube === 'dropped') {
     // A low, swooping top tube: down from the head tube to the seat tube's
     // middle, with a strut up to the seat cluster
     const mid = SEAT_TOP.clone().multiplyScalar(0.62);
@@ -207,11 +238,12 @@ export function buildBike(d: BikeDesign = DEFAULT_DESIGN): THREE.Group {
   } else {
     bike.add(tube(SEAT_TOP, HEAD_TOP, 0.022 * k, m.frame)); // top tube
   }
-  bike.add(tube(new THREE.Vector3(0, 0.02, 0.02), SEAT_TOP, 0.022 * k, m.frame)); // seat tube
+  const seatTop = dh ? SEAT_TOP.clone().multiplyScalar(0.78) : SEAT_TOP;
+  bike.add(tube(new THREE.Vector3(0, 0.02, 0.02), seatTop, 0.022 * k, m.frame)); // seat tube
   bike.add(tube(HEAD_BOTTOM, HEAD_TOP, 0.032 * k, m.frame)); // head tube
-  // Seat post (dropper, lowered) and saddle
-  const postTop = SEAT_TOP.clone().add(new THREE.Vector3(0, 0.1, 0.03));
-  bike.add(tube(SEAT_TOP, postTop, 0.016, m.black));
+  // Seat post (dropper, lowered: slammed right down on a downhill bike) and saddle
+  const postTop = seatTop.clone().add(new THREE.Vector3(0, dh ? 0.05 : 0.1, 0.03));
+  bike.add(tube(seatTop, postTop, 0.016, m.black));
   const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.04, 0.27), m.black);
   saddle.position.copy(postTop).add(new THREE.Vector3(0, 0.025, 0.02));
   saddle.castShadow = true;
@@ -226,14 +258,39 @@ export function buildBike(d: BikeDesign = DEFAULT_DESIGN): THREE.Group {
   swing.name = 'swing';
   swing.position.copy(PIVOT);
   const axle = REAR_AXLE.clone().sub(PIVOT);
-  for (const side of [-1, 1]) {
-    const off = new THREE.Vector3(side * 0.06, 0, 0);
-    swing.add(tube(off.clone(), axle.clone().add(off), 0.016 * k, m.frame)); // chainstay
-    const stayTop = new THREE.Vector3(side * 0.05, 0.3, 0.06);
-    swing.add(tube(stayTop, axle.clone().add(off), 0.013 * k, m.frame)); // seatstay
+  let rocker: THREE.Vector3;
+  if (dh) {
+    // A boxy swingarm: deep, flat-sided chainstays and seatstays meeting
+    // in a short stay brace; the shock pushes on it low, just ahead of the
+    // pivot (through the two short links, below)
+    const stayTop = new THREE.Vector3(0, 0.27, 0.12);
+    for (const side of [-1, 1]) {
+      const off = new THREE.Vector3(side * 0.06, 0, 0);
+      swing.add(box(off.clone(), axle.clone().add(off), 0.022 * k, 0.05 * k, m.frame)); // chainstay
+      swing.add(box(stayTop.clone().add(off), axle.clone().add(off), 0.02 * k, 0.035 * k, m.frame)); // seatstay
+    }
+    swing.add(box(stayTop.clone().add(new THREE.Vector3(-0.06, 0, 0)), stayTop.clone().add(new THREE.Vector3(0.06, 0, 0)), 0.03, 0.03, m.frame));
+    rocker = new THREE.Vector3(0, 0.03, -0.05);
+    // The two short links round the BB: little plates, frame to swingarm
+    for (const [a, b] of [
+      [new THREE.Vector3(0, -0.04, 0.02), new THREE.Vector3(0, -0.02, 0.1)],
+      [new THREE.Vector3(0, 0.15, 0.04), new THREE.Vector3(0, 0.16, 0.12)],
+    ]) {
+      for (const side of [-1, 1]) {
+        const o = new THREE.Vector3(side * 0.04, 0, 0);
+        bike.add(box(a.clone().add(o), b.clone().add(o), 0.012, 0.03, m.black));
+      }
+    }
+  } else {
+    for (const side of [-1, 1]) {
+      const off = new THREE.Vector3(side * 0.06, 0, 0);
+      swing.add(tube(off.clone(), axle.clone().add(off), 0.016 * k, m.frame)); // chainstay
+      const stayTop = new THREE.Vector3(side * 0.05, 0.3, 0.06);
+      swing.add(tube(stayTop, axle.clone().add(off), 0.013 * k, m.frame)); // seatstay
+    }
+    rocker = new THREE.Vector3(0, 0.3, 0.06);
+    swing.add(tube(new THREE.Vector3(-0.05, 0.3, 0.06), new THREE.Vector3(0.05, 0.3, 0.06), 0.012, m.frame));
   }
-  const rocker = new THREE.Vector3(0, 0.3, 0.06);
-  swing.add(tube(new THREE.Vector3(-0.05, 0.3, 0.06), new THREE.Vector3(0.05, 0.3, 0.06), 0.012, m.frame));
   const rear = wheel(G.wheelR);
   rear.name = 'rearWheel';
   rear.position.copy(axle);
@@ -242,7 +299,8 @@ export function buildBike(d: BikeDesign = DEFAULT_DESIGN): THREE.Group {
   // The shock: from the frame to the rocker (stretched each frame)
   const shock = new THREE.Group();
   shock.name = 'shock';
-  shock.userData.top = SHOCK_FRAME.clone();
+  // (Downhill: the shock lies low in the front triangle, off the down tube)
+  shock.userData.top = dh ? new THREE.Vector3(0, 0.24, -0.26) : SHOCK_FRAME.clone();
   shock.userData.rocker = rocker; // in swing's frame
   const body = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 1, 12), m.black);
   body.name = 'shockBody';
@@ -260,10 +318,20 @@ export function buildBike(d: BikeDesign = DEFAULT_DESIGN): THREE.Group {
   crown.position.y = -0.03;
   front.add(crown);
   const axleF = FRONT_AXLE.clone().sub(HEAD_BOTTOM);
+  const headLen = HEAD_TOP.distanceTo(HEAD_BOTTOM);
   for (const side of [-1, 1]) {
-    const top = new THREE.Vector3(side * 0.065, -0.03, 0);
-    const lowerTop = axleF.clone().addScaledVector(FORK_AXIS, 0.28).add(new THREE.Vector3(side * 0.065, 0, 0));
-    front.add(tube(top, lowerTop.clone().addScaledVector(FORK_AXIS, -0.05), 0.017, m.gold)); // stanchion
+    // (Downhill: dual-crown, the stanchions run on up past the head tube to
+    // a second crown above it)
+    const top = dh
+      ? G.steer.clone().multiplyScalar(headLen + 0.04).add(new THREE.Vector3(side * 0.07, 0, 0))
+      : new THREE.Vector3(side * 0.065, -0.03, 0);
+    const lowerTop = axleF.clone().addScaledVector(FORK_AXIS, 0.28).add(new THREE.Vector3(side * (dh ? 0.07 : 0.065), 0, 0));
+    front.add(tube(top, lowerTop.clone().addScaledVector(FORK_AXIS, -0.05), dh ? 0.019 : 0.017, m.gold)); // stanchion
+  }
+  if (dh) {
+    const upper = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.03, 0.06), m.black);
+    upper.position.copy(G.steer).multiplyScalar(headLen + 0.03);
+    front.add(upper);
   }
   const lowers = new THREE.Group();
   lowers.name = 'lowers';
@@ -276,8 +344,9 @@ export function buildBike(d: BikeDesign = DEFAULT_DESIGN): THREE.Group {
   frontWheel.position.copy(axleF);
   lowers.add(frontWheel);
   front.add(lowers);
-  // Stem and bars (riser bars, wide)
-  const stemTop = HEAD_TOP.clone().sub(HEAD_BOTTOM).add(new THREE.Vector3(0, 0.05, 0));
+  // Stem and bars (riser bars, wide; on a downhill bike the stem sits on
+  // the upper crown)
+  const stemTop = HEAD_TOP.clone().sub(HEAD_BOTTOM).add(new THREE.Vector3(0, dh ? 0.07 : 0.05, 0));
   const barCentre = stemTop.clone().add(new THREE.Vector3(0, 0.04, 0.02));
   front.add(tube(HEAD_TOP.clone().sub(HEAD_BOTTOM), stemTop, 0.02, m.black));
   front.add(tube(barCentre.clone().add(new THREE.Vector3(-0.39, 0.02, 0)), barCentre.clone().add(new THREE.Vector3(0.39, 0.02, 0)), 0.012, m.black));
@@ -354,10 +423,10 @@ export function animateBike(half: THREE.Object3D, roll: number, steer: number, s
   const front = bike.getObjectByName('front')!;
   front.quaternion.setFromAxisAngle(front.userData.axis as THREE.Vector3, steer);
   const lowers = bike.getObjectByName('lowers')!;
-  lowers.position.copy(bike.userData.forkAxis as THREE.Vector3).multiplyScalar(squash * FORK_TRAVEL);
+  lowers.position.copy(bike.userData.forkAxis as THREE.Vector3).multiplyScalar(squash * (bike.userData.forkTravel as number));
   bike.getObjectByName('frontWheel')!.rotation.x = -roll;
   const swing = bike.getObjectByName('swing')!;
-  swing.rotation.x = -squash * REAR_TRAVEL_ANGLE; // the axle comes up
+  swing.rotation.x = -squash * (bike.userData.rearTravel as number); // the axle comes up
   bike.getObjectByName('rearWheel')!.rotation.x = -roll;
   bike.getObjectByName('cranks')!.rotation.x = -crank;
   // The shock: from its frame mount to the rocker, wherever the swingarm is
