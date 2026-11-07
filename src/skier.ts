@@ -327,9 +327,8 @@ export class Skier {
   private flipMomentum = 0;
   /** How long the grab has been held this jump (s). */
   private grabTime = 0;
-  /** How long a shifty has been held this jump (s), and the way it twists. */
+  /** How long a shifty has been held this jump (s). */
   private shiftyTime = 0;
-  private shiftySide = 1;
   /**
    * Crashes on (the default) or off. Off, nothing ends a run: bad landings
    * are ridden away, walls just stop you, and the body touching the snow is
@@ -1620,13 +1619,10 @@ export class Skier {
       else if (this.weight < 0) lerpPose(t, LEAN_FORWARD, -this.weight, t);
     }
     t.lean = this.lean;
-    // Shifty (Left Shift, in the air): skis twisted one way, shoulders the
-    // other, held as long as the key is; it springs back when let go. It
-    // twists against the way you're spinning (or to the right if not).
-    if (!this.grounded && input.shifty) {
-      if (this.current.shifty === 0 || Math.abs(this.current.shifty) < 0.05) this.shiftySide = this.spinRate > 0.3 ? -1 : 1;
-      t.shifty = this.shiftySide;
-    } else t.shifty = 0;
+    // Shifty (Right Shift, in the air): skis turned 45° to the left, tips
+    // dipped, shoulders the other way, held as long as the key is; it
+    // springs back when let go
+    t.shifty = !this.grounded && input.shifty ? 1 : 0;
     // Wind-up shows as shoulders turned back against the coming spin
     t.twist = this.grounded ? -this.windup * WINDUP_TWIST : 0;
     // Switch: shoulders open up towards the look, head turns the rest

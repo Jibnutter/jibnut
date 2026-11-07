@@ -168,6 +168,7 @@ export class Segment {
 const UP = new THREE.Vector3(0, 1, 0);
 const tmpDir = new THREE.Vector3();
 const tmpPitchQ = new THREE.Quaternion();
+const tmpFlexQ = new THREE.Quaternion();
 const tmpSkiUp = new THREE.Vector3();
 const tmpHold = new THREE.Vector3();
 const tmpYaw = new THREE.Quaternion();
@@ -189,7 +190,8 @@ export const GRAB = {
   hold: { along: 0.5, up: 0.03 },
 };
 /** A shifty at full strength: skis turned this far (rad, + = tips left), shoulders back the other way. */
-export const SHIFTY = { skis: 0.75, shoulders: 0.55 };
+// (45° to the left, tips dipped a little)
+export const SHIFTY = { skis: Math.PI / 4, shoulders: 0.55, tipDown: 0.2 };
 /** On a board, the grab pulls both feet up this far. */
 const BOARD_GRAB_LIFT = 0.26;
 /** The ski's origin (its base, under the boot) sits this far below the ankle. */
@@ -522,6 +524,11 @@ export class Person {
         // nose (half 0) under the left foot
         ski.q.setFromAxisAngle(UP, Math.PI / 2);
       } else if (g > 0) ski.q.slerp(tmpPitchQ.copy(this.shins[i].mesh.quaternion).multiply(this.bootRest[i]), g);
+      // Shifty: the skis turned with the legs, tips pointing down a little
+      if (!this.board && p.shifty !== 0) {
+        tmpPitchQ.setFromAxisAngle(UP, p.shifty * SHIFTY.skis).multiply(tmpFlexQ.setFromAxisAngle(tmpX.set(1, 0, 0), -Math.abs(p.shifty) * SHIFTY.tipDown));
+        ski.q.premultiply(tmpPitchQ);
+      }
       ski.p.copy(j.ankles[i]).sub(tmpSkiUp.set(0, ANKLE_ABOVE_SKI, 0).applyQuaternion(ski.q));
 
       // Arms: hands forward and low as if holding poles, or out for balance.

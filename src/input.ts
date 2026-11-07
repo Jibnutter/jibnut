@@ -38,6 +38,6 @@ export function readControls(): Controls {
     tuck: held('KeyW', 'ArrowUp'),
     brake: held('KeyS', 'ArrowDown'),
     jump: held('Space'),
-    shifty: held('ShiftLeft'),
+    shifty: held('ShiftRight'),
   };
 }
