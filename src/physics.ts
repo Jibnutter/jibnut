@@ -1,10 +1,15 @@
 import RAPIER from '@dimforge/rapier3d-compat';
-import type * as THREE from 'three';
+import * as THREE from 'three';
 import { terrainGeometry } from './terrain';
+import { railSegments, RAIL_RADIUS } from './rails';
 
 export { RAPIER };
 
-const STEP = 1 / 120; // fixed physics timestep: fine steps keep ragdoll joints together in hard impacts
+// Fixed physics timestep. The always-on ragdoll stands on skis that stop
+// dead when they land: at 120 Hz its knees and hips pulled apart by up to
+// 47 cm for a frame on big landings; at 240 Hz, 8 cm. (More solver passes
+// at 120 Hz didn't help.)
+const STEP = 1 / 240;
 
 /**
  * The Rapier collision world: the terrain (course and surrounding mountain)
@@ -51,6 +56,18 @@ export class Physics {
         ),
       );
     }
+    // Rails: a capsule along each straight piece of bar (slippery steel)
+    for (const [a, b] of railSegments()) {
+      const mid = a.clone().add(b).multiplyScalar(0.5);
+      const along = b.clone().sub(a);
+      const rot = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), along.clone().normalize());
+      this.world.createCollider(
+        RAPIER.ColliderDesc.capsule(along.length() / 2, RAIL_RADIUS)
+          .setTranslation(mid.x, mid.y, mid.z)
+          .setRotation(rot)
+          .setFriction(0.1),
+      );
+    }
   }
 
   /** Does a shape at this pose overlap the terrain? */
@@ -64,15 +81,23 @@ export class Physics {
         hit = true;
         return false; // one is enough, stop searching
       },
-      RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC, // only the static world
+      // Only the static world: not the ragdoll's bodies, including its skis,
+      // which the controller moves directly (kinematic) while riding
+      RAPIER.QueryFilterFlags.EXCLUDE_DYNAMIC | RAPIER.QueryFilterFlags.EXCLUDE_KINEMATIC,
     );
     return hit;
   }
 
-  /** Advance the simulation by real elapsed time, in fixed steps. */
-  step(dt: number): void {
+  /**
+   * Advance the simulation by real elapsed time, in fixed steps.
+   * beforeSubstep(alpha) runs before each one, alpha going from just above
+   * 0 to 1 across this frame's steps (for moving kinematic bodies smoothly).
+   */
+  step(dt: number, beforeSubstep?: (alpha: number) => void): void {
     this.accumulator = Math.min(this.accumulator + dt, 0.05); // cap catch-up after a stall
-    while (this.accumulator >= STEP) {
+    const n = Math.floor(this.accumulator / STEP);
+    for (let i = 1; i <= n; i++) {
+      beforeSubstep?.(i / n);
       this.world.step();
       this.accumulator -= STEP;
     }

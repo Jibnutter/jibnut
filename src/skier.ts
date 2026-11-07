@@ -1,18 +1,30 @@
 import * as THREE from 'three';
-import { heightAt, normalAt, courseX, EDGE_LIMIT, MAX_Z } from './terrain';
+import { heightAt, normalAt, courseX, EDGE_LIMIT, MAX_Z, MAP_BOUNCE, SNOW_DRAG, JUMPS } from './terrain';
 import type { Controls } from './input';
 import { RAPIER, type Physics } from './physics';
 import { Ragdoll } from './ragdoll';
 import { SecondaryMotion } from './secondary';
+import { PhysicalRide } from './physicalRide';
+import { Bottoms } from './bottoms';
+import { Top } from './top';
+import type { Outfit } from './progress';
+import { createSki } from './skiModel';
+import { createBoardHalf, BOARD_STANCE, BOARD_LENGTH } from './boardModel';
+import { groundAt, railAt, type RailContact } from './rails';
 import {
   Person,
   BODY,
+  PANTS_COLOR,
+  SHIRT_COLOR,
   RIDING,
   TUCK,
   CROUCH,
   AIR,
   AIR_TUCK,
+  AIR_ARCH,
   AIR_OPEN,
+  AIR_GRAB,
+  AIR_INDY,
   AIR_SPIN,
   LEAN_BACK,
   LEAN_FORWARD,
@@ -23,51 +35,38 @@ import {
 
 const STANCE = BODY.stance; // half the gap between the skis
 
-function createSki(x: number): THREE.Group {
-  const mat = new THREE.MeshStandardMaterial({ color: 0x2b6fd6, roughness: 0.4 });
-  const ski = new THREE.Group();
-
-  const base = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.03, 1.6), mat);
-  base.castShadow = true;
-  ski.add(base);
-
-  // Upturned tip at the front (-Z) and a smaller kick at the tail
-  const tip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.03, 0.2), mat);
-  tip.position.set(0, 0.04, -0.88);
-  tip.rotation.x = 0.5;
-  tip.castShadow = true;
-  ski.add(tip);
-  const tail = tip.clone();
-  tail.position.z = 0.86;
-  tail.rotation.x = -0.3;
-  ski.add(tail);
-
-  // Boot
-  const boot = new THREE.Mesh(
-    new THREE.BoxGeometry(0.12, 0.1, 0.3),
-    new THREE.MeshStandardMaterial({ color: 0x222222 }),
-  );
-  boot.position.y = 0.06;
-  boot.castShadow = true;
-  ski.add(boot);
-
-  ski.position.set(x, 0.015, 0);
-  return ski;
-}
 
 const GRAVITY = 9.81;
 const SNOW_FRICTION = 0.05; // ski-on-snow friction coefficient
 const AIR_DRAG = 0.004; // 0.5 * air density * drag area / mass, per metre
 const TUCK_DRAG = 0.002; // tucking roughly halves the frontal area
-const BRAKE_DECEL = 4; // snowplow, m/s^2
+const BRAKE_DECEL = 4; // m/s^2 braking, starting to turn the skis across ...
+const SKID_DECEL = 4; // ... plus this much more with them fully across (a hockey stop)
+const SKID_ANGLE = THREE.MathUtils.degToRad(80); // braking turns the skis this far across the way we're going
+const SKID_RATE = 9; // 1/s: how quickly they swing round
+const SKID_COUNTER = 0.75; // the upper body turns back this much of it, to keep facing down the hill
+const SKID_LEAN = 0.3; // rad: leaning back against the slide
 const TURN_RATE = 2.2; // rad/s when slow; turning gets wider at speed
 const CLEAN_SPIN = 0.6; // land within ~35° of your travel direction to stick it
 const CLEAN_FLIP = 0.7; // land with the body within ~40° of the slope's normal to stick it
 const TURN_SCRUB = 0.25; // fraction of speed lost per second while turning hard
 const MAX_LEAN = 0.45; // radians the body leans into a turn
+const MAX_BALANCE_LEAN = 0.85; // ... up to this much in fast, tight turns
+const PULL_RATE = 3; // 1/s: how quickly a carve's sideways pull builds
+const EDGE_PER_LEAN = 1.0; // ski edge angle per radian of lean
 const EDGE = EDGE_LIMIT; // stay on the course, between the berms
 const WALL = 0.4; // a step up bigger than this (m) blocks you, e.g. a kicker's side
 const MAX_SLOPE_NY = 0.5; // surfaces steeper than 60° count as walls, not slopes
+// Rails: steel slides far more easily than snow
+const RAIL_FRICTION = 0.02;
+const RAIL_CATCH_BELOW = 0.3; // m: landing this far below a rail's top still catches it
+const ROLL_OFF_SPIN = 0.35; // of the carve's turn kept when rolling off an edge (no pop)
+const MIN_GRIND = 0.25; // s: slides shorter than this don't get called out
+// Grabs (hold Space in the air)
+const MIN_GRAB = 0.25; // s held for the grab to count
+const GRAB_HELD = 0.8; // the pose this far into the grab counts as holding it
+const GRAB_LAND_MAX = 0.5; // land still this far into the grab (skis crossed) and you fall
+const RAIL_TURN_RATE = 4.5; // rad/s: on a rail the skis swing round freely (no edges to carve)
 const WALL_CRASH_SPEED = 4; // m/s: hit a kicker's side faster than this and you fall
 
 // While riding, the spine (pelvis, abdomen, chest) and head are checked
@@ -93,10 +92,19 @@ const WEIGHT_SHIFT_RATE = 6; // how quickly weight moves fore/aft, and wind-up b
 // takeoff.
 const WIND_MOMENTUM = 14;
 const WINDUP_TWIST = 0.6; // radians the shoulders turn back while winding up
-const SWITCH_TWIST = 0.6; // shoulders turned towards the look when riding switch
+const SWITCH_TWIST = 0.6;
+// Snowboard: head turned to look down the board, shoulders opened a little,
+// and turns made by leaning over the toe or heel edge
+const BOARD_LOOK = 0.8;
+const BOARD_TWIST = 0.3;
+const BOARD_EDGE_PITCH = 0.9;
+const BOARD_EDGE_HIPS = 0.25; // shoulders turned towards the look when riding switch
 // The upper body turns partly towards the fall line, separately from the skis
-const FALL_LINE_PULL = 0.4; // fraction of the way
-const MAX_COUNTER = 0.45; // radians at most
+const FALL_LINE_PULL = 0.6; // fraction of the way
+const MAX_COUNTER = 0.75; // radians at most
+// In the air the shoulders lead a spin and the hips and skis follow
+const SPIN_LEAD = 0.15; // radians of lead per rad/s of spin
+const MAX_SPIN_LEAD = 0.7;
 const SKI_MASS = 2; // kg, matching the ragdoll's skis
 const SKI_LENGTH = 1.6;
 // Windmilling the arms turns the body a little without changing its angular
@@ -106,7 +114,33 @@ const WINDMILL_RATE = 1.2; // rad/s
 // With no keys held and no flip going, riders instinctively spot their
 // landing: the same windmilling, gentler. A rider leaving a 24° lip for a
 // 32° landing needs ~56° of forward rotation from somewhere.
-const AUTO_SPOT_RATE = 0.7; // rad/s
+const AUTO_SPOT_RATE = 1.0; // rad/s
+// Standing on a side slope: square to it up to this tilt (rad), then only
+// this much of any more (stay nearer upright, skis on edge)
+const SIDE_TILT_FULL = 0.26;
+const SIDE_TILT_BEYOND = 0.35;
+// Hard landings: speed into the slope above this squashes the body right
+// down and then bounces it back up into a hop (for fun, not realism)
+const HARD_LANDING = 8; // m/s
+const SQUASH_KICK = 5; // m/s of hip drop: the legs fold fully
+const BOUNCE_DELAY = 0.14; // s: bounce at the bottom of the squash
+const BOUNCE_MIN = 2; // m/s of hop
+const BOUNCE_PER_IMPACT = 0.5;
+const BOUNCE_MAX = 6;
+// Bumps: the legs soak up the snow curving upwards (m/s of hip drop per m/s
+// of hit), and spring a share of a big enough bump back as a little hop
+const BUMP_ABSORB = 0.6;
+const BUMP_MEMORY = 0.12; // s: hits this close together are one bump
+const BUMP_OVER = 0.03; // m/s: a hit this small means the bump's been passed
+const BUMP_MIN = 0.3; // m/s: smaller bumps are just soaked up
+const BUMP_REBOUND = 1.3;
+const BUMP_MAX = 2.5; // m/s
+const STRETCH_KICK = 2.5; // m/s: the legs spring out as it bounces
+// Landing: skis slap onto the slope over a moment instead of snapping
+const SLAP_TIME = 0.15; // s
+const AIR_HANDOVER_RATE = 25; // 1/s: ragdoll held by skis <-> by its core (~0.1 s)
+const SLAP_RATE = 30; // 1/s
+const SQUASH_GRACE = 0.35; // s after a clean landing when chest/head touching the snow is allowed
 const AUTO_SPOT_MAX_FLIP = 1.5; // rad/s: above this you're flipping, so no auto-spot
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -136,6 +170,16 @@ function trickName(spin: number, pitch: number, fromSwitch: boolean): string {
   const trick = parts.join(' + ');
   return trick && fromSwitch ? `Switch ${trick}` : trick;
 }
+// Points: each flip (back or front), each full spin (a 180 scores half),
+// and holding a grab
+const POINTS = { flip: 200, spin360: 100, grab: 50 };
+
+/** What a landed trick scores (rounded the same way as its name). */
+function trickPoints(spin: number, pitch: number, grabbed: boolean): number {
+  const halfSpins = Math.round(Math.abs(spin) / Math.PI);
+  const flips = Math.abs(Math.round(pitch / (2 * Math.PI)));
+  return flips * POINTS.flip + (halfSpins * POINTS.spin360) / 2 + (grabbed ? POINTS.grab : 0);
+}
 const g = new THREE.Vector3(0, -GRAVITY, 0);
 const tmpN = new THREE.Vector3();
 const tmpDir = new THREE.Vector3();
@@ -147,12 +191,30 @@ const tmpCentre = new THREE.Vector3();
 const tmpStart = new THREE.Vector3();
 const tmpSweep = new THREE.Vector3();
 const tmpSlide = new THREE.Vector3();
-const tmpBack = new THREE.Vector3();
 const tmpCom = new THREE.Vector3();
 const tmpMass: MassProperties = { mass: 0, com: new THREE.Vector3(), pitchInertia: 1, yawInertia: 1, rollInertia: 1 };
+// Inertias of the backflip arch and the forward ball
+// tuck (computed once from the body model; see updateMass)
+const TUCK_INERTIA = (() => {
+  const p = new Person();
+  const m: MassProperties = { mass: 0, com: new THREE.Vector3(), pitchInertia: 1, yawInertia: 1, rollInertia: 1 };
+  const skis = [-STANCE, STANCE].map((x) => ({ p: new THREE.Vector3(x, 0.015, 0), d: new THREE.Vector3(0, 0, 1) }));
+  const inertia = (pose: Pose) => {
+    p.pose(pose);
+    p.massProperties(skis, SKI_MASS, SKI_LENGTH, m);
+    return { pitch: m.pitchInertia, yaw: m.yawInertia, roll: m.rollInertia };
+  };
+  return { back: inertia(AIR_ARCH), ball: inertia(AIR_TUCK) };
+})();
 // Skis sit untilted in the stance frame, alongside the person
 const SKIS_IN_STANCE = [-STANCE, STANCE].map((x) => ({
   p: new THREE.Vector3(x, 0.015, 0),
+  d: new THREE.Vector3(0, 0, 1),
+}));
+// ... or the board's two halves, one under each foot along the board
+const BOARD_FLOAT = 0.12; // m: a board rides on top of the powder
+const BOARD_IN_STANCE = [-BOARD_STANCE, BOARD_STANCE].map((z) => ({
+  p: new THREE.Vector3(0, 0.015 + BOARD_FLOAT, z),
   d: new THREE.Vector3(0, 0, 1),
 }));
 const tmpFelt = new THREE.Vector3();
@@ -173,6 +235,7 @@ function rotateBy(q: THREE.Quaternion, w: THREE.Vector3, dt: number): void {
 }
 const tmpUp = new THREE.Vector3();
 const tmpFwd = new THREE.Vector3();
+const tmpBump = new THREE.Vector3();
 const tmpFootN = new THREE.Vector3();
 const tmpPush = new THREE.Vector3();
 // Sample points (along the skis, across them) in metres from the boots
@@ -183,15 +246,34 @@ const tmpSideAxis = new THREE.Vector3();
 const tmpTorque = new THREE.Vector3();
 
 export class Skier {
+  /** The hidden controller rig: the posed target body and skis. */
   readonly object = new THREE.Group();
+  /** What you see: the ragdoll. Add this to the scene. */
+  readonly view = new THREE.Group();
   private readonly skis = new THREE.Group();
   private readonly person = new Person();
+  /** The clothes, simulated as cloth over the ragdoll (see setOutfit). */
+  private bottoms!: Bottoms;
+  private top!: Top;
   /** Springy layer on top of the pose: suspension, lag, floppy arms. */
   private readonly secondary = new SecondaryMotion();
   private readonly prevVelocity = new THREE.Vector3();
   private prevHeading = 0;
+  /** Hockey stop: the skis (and legs) turned across the way we're going (rad, + = left). */
+  private skid = 0;
+  private prevSkid = 0;
+  /** Which way the skis swing round when braking: the way we last steered (+ = left). */
+  private skidSide = 1;
   private prevGrounded = true;
   private poppedThisFrame = false;
+  /** Eased 0 (on the snow) .. 1 (in the air): who holds the ragdoll. */
+  private airBlend = 0;
+  // Quirky bounce after a really hard landing: wait for the squash, then boing
+  private bounceTimer = 0;
+  private slapTime = 0; // s left of easing the skis onto the slope after landing
+  /** Just after a clean landing the body may squash right down: brushing the snow then isn't a fall. */
+  private squashGrace = 0;
+  private bounceSpeed = 0;
   /** Current pose, eased towards the target each frame. */
   private readonly current: Pose = { ...RIDING };
   private readonly target: Pose = { ...RIDING };
@@ -232,6 +314,33 @@ export class Skier {
    * inertia, so tucking (less inertia) spins faster and opening up slows down.
    */
   private flipMomentum = 0;
+  /** How long the grab has been held this jump (s). */
+  private grabTime = 0;
+  /**
+   * Crashes on (the default) or off. Off, nothing ends a run: bad landings
+   * are ridden away, walls just stop you, and the body touching the snow is
+   * fine.
+   */
+  crashes = true;
+  // Bumps (see suspension)
+  private readonly lastRideDir = new THREE.Vector3();
+  private hasRideDir = false;
+  private bumpStore = 0;
+  /** A carve's sideways pull (m/s², smoothed; + = turning left), for leaning in. */
+  private turnPull = 0;
+  /** Space still held from a grab when we landed: it mustn't charge a jump until let go. */
+  private jumpLocked = false;
+  /** Sliding a rail: for how long, and how much of it with the skis across it. */
+  private grindTime = 0;
+  private grindAcross = 0;
+  /** The last slide, called out when we land after it (0: none). */
+  private lastGrind = { time: 0, across: 0 };
+  private readonly railContact: RailContact = {
+    top: 0,
+    dir: new THREE.Vector3(),
+    normal: new THREE.Vector3(),
+    point: new THREE.Vector3(),
+  };
   private flipVel = 0;
   // In the air the body is a free rigid body: a full orientation (airQ, of
   // the body and its stance) and an angular momentum vector (airL) fixed in
@@ -259,10 +368,21 @@ export class Skier {
   private lookSide = 1;
   private pitch = 0; // flip rotation so far, radians: + backflip, - frontflip
   private airSpin = 0; // heading change during this jump, radians
+  private spinRate = 0; // how fast we're spinning in the air, rad/s
 
+  /** Called when a hard landing bounces back up. */
+  onBounce?: () => void;
   /** Called on landing after a trick or a crash, for the HUD to show. */
-  onLand?: (message: string, clean: boolean) => void;
+  /** After each landing: what to call out, whether it was clean, and the points it scored. */
+  onLand?: (message: string, clean: boolean, points: number) => void;
 
+  /**
+   * Fully physical skiing (toggle): the skis slide on the snow by themselves
+   * and the controller only reads them and poses the body. Takes effect on
+   * the next reset.
+   */
+  physicalMode = false;
+  private ride: PhysicalRide | null = null;
   /** 'riding' = our own ski physics; 'tumbling' = crashed, Rapier simulates. */
   mode: 'riding' | 'tumbling' = 'riding';
   private readonly physics: Physics;
@@ -275,7 +395,6 @@ export class Skier {
   private stillTime = 0;
   private airTime = 0;
   private hitWall = false;
-  private readonly prevCentre = new THREE.Vector3();
   /** Why the last crash happened, for debugging. */
   crashReason = '';
 
@@ -310,6 +429,12 @@ export class Skier {
       wire,
     );
     this.debugSkis.position.y = 0.015;
+    // The posed body is only the ragdoll's target now: hide it
+    this.object.visible = false;
+    this.setOutfit({
+      bottom: { id: '', name: '', price: 0, slot: 'bottom', kind: 'shorts', color: PANTS_COLOR },
+      top: { id: '', name: '', price: 0, slot: 'top', kind: 'tee', color: SHIRT_COLOR },
+    });
     this.skis.add(this.debugSkis);
     this.showColliders = false;
   }
@@ -324,8 +449,38 @@ export class Skier {
   }
 
   /** World position of the centre of mass: what the camera should follow. */
+  /** First-person view: the camera sits in the head, so hide it. */
+  set firstPerson(on: boolean) {
+    this._firstPerson = on;
+    if (this.ragdoll) this.ragdoll.headVisual.visible = !on;
+  }
+  get firstPerson(): boolean {
+    return this._firstPerson;
+  }
+  private _firstPerson = false;
+
+  /**
+   * Where the rider's eyes are and which way the head faces (world), from
+   * the visible ragdoll head (or the posed body before it exists).
+   */
+  eyes(pos: THREE.Vector3, rot: THREE.Quaternion): void {
+    const head = this.ragdoll ? this.ragdoll.headVisual : this.person.head;
+    head.updateMatrixWorld(true);
+    head.getWorldPosition(pos);
+    head.getWorldQuaternion(rot);
+  }
+
+  /**
+   * How far the chest (and so the head on it) is pitched forward in the
+   * current pose, radians: the first-person camera tilts back up by this so
+   * a crouched rider still looks ahead rather than at their skis.
+   */
+  get headPitch(): number {
+    return this.current.torsoPitch * 1.25;
+  }
+
   centre(out = new THREE.Vector3()): THREE.Vector3 {
-    if (this.ragdoll) return this.ragdoll.torsoPosition(out);
+    if ((this.mode === 'tumbling' || this.ride) && this.ragdoll) return this.ragdoll.torsoPosition(out);
     return this.body.getWorldPosition(out);
   }
 
@@ -338,25 +493,114 @@ export class Skier {
     return this.velocity.length();
   }
 
+  /** Where ski i (0 left, 1 right) is, in the world: for snow effects. */
+  skiWorld(i: number, out: THREE.Vector3): THREE.Vector3 {
+    // (The ragdoll moves these: bring their matrices up to date first)
+    this.skiModels[i].updateWorldMatrix(true, false);
+    return this.skiModels[i].getWorldPosition(out);
+  }
+
+  /** Riding a snowboard (instead of skis). */
+  board = false;
+
+  /** Swap skis for a snowboard or back. Takes effect from the next (re)start. */
+  setBoard(on: boolean): void {
+    if (on === this.board) return;
+    this.board = on;
+    this.person.setBoard(on);
+    // A board floats on top of the powder (skis ride buried in it)
+    this.person.group.position.y = on ? BOARD_FLOAT : 0;
+    this.skis.position.y = on ? BOARD_FLOAT : 0;
+    this.skis.remove(...this.skiModels);
+    this.skiModels.splice(0, 2, ...(on ? [createBoardHalf(0), createBoardHalf(1)] : [createSki(-STANCE), createSki(STANCE)]));
+    this.skis.add(...this.skiModels);
+    if (this.ragdoll) {
+      this.ragdoll.destroy();
+      this.ragdoll = null;
+      this.ride = null;
+    }
+    this.placeSkis();
+  }
+
+  /** The skis (or board halves) as mass rods, for the body's mass properties. */
+  private skiRods(): [{ p: THREE.Vector3; d: THREE.Vector3 }[], number, number] {
+    return this.board ? [BOARD_IN_STANCE, SKI_MASS, BOARD_LENGTH / 2] : [SKIS_IN_STANCE, SKI_MASS, SKI_LENGTH];
+  }
+
+  /**
+   * Put the skis where the pose puts them (under the boots; crossed in a
+   * grab), in the stance frame. (The pose is in the person's frame: turned
+   * sideways on a board.) Rolled onto their edges into a turn as much as
+   * the body leans (the physical skis spring towards this; flat again in
+   * the air).
+   */
+  private placeSkis(): void {
+    const g = this.person.group.quaternion;
+    this.skiModels.forEach((ski, i) => {
+      const pose = this.person.skiPoses[i];
+      ski.position.copy(pose.p).applyQuaternion(g);
+      ski.quaternion.copy(g).multiply(pose.q);
+      if (this.grounded) ski.rotateZ(this.lean * EDGE_PER_LEAN);
+    });
+  }
+
+  /** Put on these clothes (they snap onto the body). */
+  setOutfit(o: Pick<Outfit, 'bottom' | 'top'>): void {
+    for (const old of [this.bottoms, this.top]) {
+      if (!old) continue;
+      old.mesh.removeFromParent();
+      old.mesh.geometry.dispose();
+      (old.mesh.material as THREE.Material).dispose();
+    }
+    this.bottoms = new Bottoms(this.person, o.bottom.kind === 'pants' ? 'pants' : 'shorts', o.bottom.color);
+    this.top = new Top(this.person, o.top.kind === 'jacket' ? 'jacket' : 'tee', o.top.color);
+    this.view.add(this.bottoms.mesh, this.top.mesh);
+    this.person.dress(o.bottom, o.top);
+    if (this.ragdoll) {
+      this.bottoms.bind(this.ragdoll);
+      this.top.bind(this.ragdoll);
+    }
+  }
+
+  /** How far the skis are turned across the way we're going (hockey stop; rad, + = left). */
+  get skidAngle(): number {
+    return this.grounded ? this.skid : 0;
+  }
+
+  /** How fast we're turning on the snow (rad/s, + = left). */
+  get turning(): number {
+    return this.grounded ? this.turnRate : 0;
+  }
+
   /** Unit vector the skier is facing, on the horizontal plane. */
   forward(out = new THREE.Vector3()): THREE.Vector3 {
     return out.set(-Math.sin(this.heading), 0, -Math.cos(this.heading));
   }
 
   reset(x: number, z: number): void {
+    this.bumpStore = 0;
+    this.hasRideDir = false;
+    this.grabTime = 0;
+    this.jumpLocked = false;
+    this.skid = 0;
+    this.prevSkid = 0;
+    this.grindTime = 0;
+    this.lastGrind = { time: 0, across: 0 };
     if (this.ragdoll) {
+      // A fresh ragdoll is built in the new pose on the next update
       this.ragdoll.destroy();
       this.ragdoll = null;
+      this.ride = null;
     }
+    this.bounceTimer = 0;
     this.mode = 'riding';
     this.object.quaternion.identity();
     this.stance.quaternion.identity();
-    // Put the skis back under the feet (the ragdoll may have moved them)
-    this.skiModels.forEach((ski, i) => {
-      ski.position.set(i === 0 ? -STANCE : STANCE, 0.015, 0);
-      ski.quaternion.identity();
-    });
     Object.assign(this.current, RIDING);
+    // Put the skis back under the feet (the ragdoll may have moved them)
+    this.lean = 0;
+    this.person.pose(RIDING);
+    this.placeSkis();
     this.velocity.set(0, 0, 0);
     this.heading = 0;
     this.grounded = true;
@@ -367,6 +611,7 @@ export class Skier {
     this.windup = 0;
     this.turnRate = 0;
     this.switchStance = false;
+    this.airBlend = 0;
     this.flipVel = 0;
     this.flipMomentum = 0;
     this.weight = 0;
@@ -390,7 +635,21 @@ export class Skier {
    * around the COM rather than the COM itself.
    */
   private updateMass(inAir: boolean): void {
-    this.person.massProperties(SKIS_IN_STANCE, SKI_MASS, SKI_LENGTH, this.mass);
+    this.person.massProperties(...this.skiRods(), this.mass);
+    if (inAir && this.current.torsoPitch < 0) {
+      // Arching back in a backflip: flip as fast as the forward ball tuck
+      // would (the arch is the look; physically it's far less compact and
+      // doubles became impossible). Blended in by how far the body has
+      // leaned back into the arch.
+      // All three axes, so the body's inertias stay in the ball's proportions
+      // (scaling only the flip axis made it the middle one of the three,
+      // which tumbles: the "tennis racket" effect twisted backflips)
+      const { back, ball } = TUCK_INERTIA;
+      const progress = THREE.MathUtils.clamp(this.current.torsoPitch / AIR_ARCH.torsoPitch, 0, 1);
+      this.mass.pitchInertia *= Math.pow(ball.pitch / back.pitch, progress);
+      this.mass.yawInertia *= Math.pow(ball.yaw / back.yaw, progress);
+      this.mass.rollInertia *= Math.pow(ball.roll / back.roll, progress);
+    }
     if (inAir) {
       // The body group sits at the COM and doesn't move with shape changes
       // (the COM is ballistic); the rig hangs off it so the COM stays put and
@@ -413,31 +672,89 @@ export class Skier {
     return this.switchStance ? out.negate() : out;
   }
 
+  /**
+   * Legs as suspension. Following the snow, the rider is turned upwards
+   * wherever it curves up (into a bump, a dip's far side): that's a hit,
+   * speed into the slope. The legs soak it up (the body sinks), and once
+   * it's over, a share of it springs back as a little hop off the bump.
+   * (Not on jump ramps: their takeoffs stay as tuned. Not on rails.)
+   */
+  private suspension(dt: number, dir: THREE.Vector3, n: THREE.Vector3, grinding: boolean): void {
+    const p = this.object.position;
+    const onJump = JUMPS.some((j) => p.z <= j.startZ + 2 && p.z >= j.knuckleZ - 2);
+    let hit = 0;
+    if (this.hasRideDir && !grinding && !onJump) {
+      hit = this.speed * Math.max(0, tmpBump.subVectors(dir, this.lastRideDir).dot(n));
+    }
+    this.lastRideDir.copy(dir);
+    this.hasRideDir = true;
+    if (hit > 0) this.secondary.compress.velocity -= hit * BUMP_ABSORB;
+    // The hits of the last moment add up: one bump's worth
+    this.bumpStore = this.bumpStore * Math.exp(-dt / BUMP_MEMORY) + hit;
+    // (No hop while a landing is still settling: it stacked onto the
+    // landing's own squash and bounce, into a second, crooked landing)
+    const settling = this.slapTime > 0 || this.bounceTimer > 0 || this.squashGrace > 0;
+    if (settling) this.bumpStore = 0;
+    if (hit < BUMP_OVER && this.bumpStore > BUMP_MIN) {
+      const hop = Math.min(BUMP_MAX, (this.bumpStore - BUMP_MIN) * BUMP_REBOUND);
+      this.velocity.addScaledVector(n, hop);
+      this.secondary.compress.velocity += hop * 0.8; // legs extending into it
+      this.bumpStore = 0;
+    }
+  }
+
+  /** Along a rail, the way we're already sliding (downhill if barely moving). */
+  private railDir(rail: RailContact, out: THREE.Vector3): THREE.Vector3 {
+    out.copy(rail.dir);
+    return this.velocity.dot(out) < -0.5 ? out.negate() : out;
+  }
+
   /** Facing direction laid onto the snow surface with normal n. */
   private surfaceDir(n: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 {
     this.forward(out);
     return out.addScaledVector(n, -out.dot(n)).normalize();
   }
 
-  /** Call after physics.step() each frame. */
+  /**
+   * Once per frame: run the ski controller, pose the (hidden) target body,
+   * drive the ragdoll towards it and step the physics world.
+   */
   update(dt: number, input: Controls): void {
+    if (!this.ragdoll) this.buildRagdoll();
+    if (this.mode === 'riding' && this.ride) {
+      this.updatePhysical(dt, input);
+      return;
+    }
     if (this.mode === 'tumbling') {
+      this.physics.step(dt);
       this.updateTumble(dt);
       return;
     }
 
     const wasGrounded = this.grounded;
     this.hitWall = false;
-    this.centre(this.prevCentre); // for the swept collision check below
+    // Landed still holding Space (from a grab): it isn't a jump charge
+    if (this.jumpLocked) {
+      if (!input.jump) this.jumpLocked = false;
+      else if (this.grounded) input = { ...input, jump: false };
+    }
+    if (!this.grounded) this.hasRideDir = false; // (a fresh start after landing)
     if (this.grounded) this.updateGround(dt, input);
     else this.updateAir(dt, input);
     if (wasGrounded && !this.grounded) {
-      // Just took off: start counting tricks for this jump
+      // Just took off (maybe off a rail: remember the slide for the callout)
+      if (this.grindTime > 0) {
+        this.lastGrind = { time: this.grindTime, across: this.grindAcross };
+        this.grindTime = 0;
+      }
+      // Start counting tricks for this jump
+      this.grabTime = 0;
       this.airSpin = 0;
       this.pitch = 0;
       this.airTime = 0;
       this.windup = 0; // released into the spin
       this.takeoffSwitch = this.switchStance;
+      this.skid = 0; // (skis back in line: the air works with one heading)
       this.enterAir();
     }
 
@@ -453,30 +770,140 @@ export class Skier {
     this.updatePose(dt, input);
     this.object.updateMatrixWorld(true);
 
-    // Collisions, now that the model is posed for this frame
-    const contact = this.bodyContact(this.prevCentre);
-    if (contact !== null) {
-      // Back up to the last clear point on this frame's path, so the ragdoll
-      // starts touching the snow rather than buried in it (Rapier would fling
-      // the torso out and tear the limbs off their joints)
-      const back = tmpBack.copy(this.centre(tmpCentre)).sub(this.prevCentre);
-      p.addScaledVector(back, contact - 1);
-      this.object.updateMatrixWorld(true);
-    }
-    if (this.hitWall || contact !== null) {
-      this.crash(this.hitWall ? 'hit a wall' : this.grounded ? 'body hit snow (riding)' : 'body hit snow (air)');
-      return;
-    }
-    if (!this.grounded) {
+    if (this.hitWall) {
+      if (this.crashes) this.crash('hit a wall');
+      else this.velocity.set(0, 0, 0); // (crashes off: just stop against it)
+    } else if (!this.grounded) {
       this.airTime += dt;
+      if (this.current.grab >= GRAB_HELD) this.grabTime += dt;
       const feet = this.stance.getWorldPosition(tmpFeetW);
       const skisDown = this.airTime > SKI_GRACE && this.velocity.y < 0 && this.skisHitSnow();
       // The feet only mean "feet on the snow" when roughly upright; upside
       // down it's the body or skis that touch, caught above
       const upright = tmpUp.set(0, 1, 0).applyQuaternion(this.airQ).y > 0.5;
-      if ((upright && feet.y <= heightAt(feet.x, feet.z)) || skisDown) {
+      if ((upright && feet.y <= groundAt(feet.x, feet.z)) || skisDown) {
         this.land();
+        if (this.grounded && input.jump) {
+          this.jumpLocked = true;
+          this.wasJumpHeld = false;
+          this.charge = 0;
+        }
       }
+    }
+
+    // The visible body: pull it towards this frame's pose, carry it on the
+    // skis (on the snow) or by its core (in the air, so it turns about its
+    // centre of mass), and let physics do the rest
+    const ragdoll = this.ragdoll!;
+    this.airBlend += ((this.grounded ? 0 : 1) - this.airBlend) * (1 - Math.exp(-AIR_HANDOVER_RATE * dt));
+    ragdoll.airBlend = this.airBlend;
+    ragdoll.grab = this.grounded ? 0 : this.current.grab;
+    ragdoll.drive();
+    this.physics.step(dt, (alpha) => ragdoll.beforeSubstep(alpha));
+    ragdoll.sync();
+    this.bottoms.update(dt);
+    this.top.update(dt);
+    // A fall is the real body's chest or head touching the snow (the pelvis
+    // may touch down in a deep landing squat: that's fine)
+    this.squashGrace = Math.max(0, this.squashGrace - dt);
+    if (this.mode === 'riding' && this.squashGrace === 0 && ragdoll.chestOrHeadDown()) {
+      if (this.crashes) this.crash(this.grounded ? 'chest or head hit the snow (riding)' : 'chest or head hit the snow (air)');
+      // Crashes off, coming down head or back first: that's the landing
+      else if (!this.grounded) this.land();
+    }
+  }
+
+  /**
+   * Stand still, posed (for the locker): no riding, but the visible body
+   * and its clothes are simulated, so they hang and sway as in the game.
+   */
+  preview(dt: number): void {
+    if (!this.ragdoll) this.buildRagdoll();
+    this.velocity.set(0, 0, 0);
+    this.updatePose(dt, { steer: 0, tuck: false, brake: false, jump: false });
+    this.object.updateMatrixWorld(true);
+    const ragdoll = this.ragdoll!;
+    ragdoll.airBlend = 0;
+    ragdoll.grab = 0;
+    ragdoll.drive();
+    this.physics.step(dt, (alpha) => ragdoll.beforeSubstep(alpha));
+    ragdoll.sync();
+    this.bottoms.update(dt);
+    this.top.update(dt);
+  }
+
+  /** Build the ragdoll in the current target pose (after a reset). */
+  private buildRagdoll(): void {
+    this.object.updateMatrixWorld(true);
+    // (Posed in the person's frame: on a board it's turned sideways)
+    this.ragdoll = new Ragdoll(this.physics, this.person, this.person.group, this.skiModels, this.velocity);
+    this.view.add(this.ragdoll.view);
+    this.ragdoll.headVisual.visible = !this._firstPerson;
+    this.bottoms.bind(this.ragdoll);
+    this.top.bind(this.ragdoll);
+    if (this.physicalMode && !this.board) {
+      this.ride = new PhysicalRide(this.ragdoll);
+      this.ride.onBounce = () => this.onBounce?.();
+    }
+  }
+
+  /**
+   * Physical mode, once per frame: read the free skis, handle the jump and
+   * the pose from the controls, then let physics (plus the ski-on-snow
+   * forces) move everything.
+   */
+  private updatePhysical(dt: number, input: Controls): void {
+    const ride = this.ride!;
+    const ragdoll = this.ragdoll!;
+    const wasGrounded = this.grounded;
+    this.grounded = ride.grounded;
+    this.heading = ride.heading;
+    this.velocity.copy(ride.velocity);
+    this.object.position.copy(ride.feet);
+    const speed = this.velocity.length();
+
+    if (this.grounded) {
+      // Loading a jump: Space charges, W/S shift weight, A/D wind up
+      const loading = input.jump;
+      const ease = 1 - Math.exp(-WEIGHT_SHIFT_RATE * dt);
+      this.weight += ((loading ? (input.brake ? 1 : 0) - (input.tuck ? 1 : 0) : 0) - this.weight) * ease;
+      this.windup += ((loading ? input.steer : 0) - this.windup) * ease;
+      this.turnRate = loading ? 0 : input.steer * (TURN_RATE / (1 + speed / 25));
+      if (loading) this.charge = Math.min(1, this.charge + dt / CHARGE_TIME);
+      if (this.wasJumpHeld && !input.jump) {
+        ride.pop(this.charge, this.windup, this.turnRate);
+        this.charge = 0;
+        this.windup = 0;
+        this.poppedThisFrame = true;
+      }
+    } else {
+      this.charge = 0;
+      this.windup = 0;
+    }
+    this.wasJumpHeld = input.jump;
+    if (this.grounded && !wasGrounded) this.squashGrace = SQUASH_GRACE;
+
+    // Pose the target body (relative shapes are what the muscles follow)
+    this.updatePose(dt, input);
+    this.object.updateMatrixWorld(true);
+    ragdoll.drive();
+    const loading = input.jump && this.grounded;
+    const rideInput = {
+      steer: loading ? 0 : input.steer,
+      tuck: input.tuck && !loading,
+      brake: input.brake && !loading,
+      spot: !this.grounded && input.tuck,
+    };
+    this.physics.step(dt, () => ride.substep(rideInput));
+    ragdoll.sync();
+    this.bottoms.update(dt);
+    this.top.update(dt);
+    ride.read();
+    ride.afterFrame(dt);
+
+    this.squashGrace = Math.max(0, this.squashGrace - dt);
+    if (this.squashGrace === 0 && ragdoll.chestOrHeadDown()) {
+      if (this.crashes) this.crash(this.grounded ? 'chest or head hit the snow (physical)' : 'chest or head hit the snow (physical, air)');
     }
   }
 
@@ -530,26 +957,14 @@ export class Skier {
   }
 
   /**
-   * Fall: hand the skier over to Rapier as a ragdoll built from the current
-   * pose, carrying the current speed and spin, and let it tumble.
+   * Fall: the ragdoll goes limp (skis let go, muscles relaxed) and tumbles
+   * on from exactly how it was moving.
    */
   private crash(reason: string): void {
+    this.grindTime = 0;
+    this.lastGrind = { time: 0, across: 0 };
     this.crashReason = reason;
-    const com = this.body.getWorldPosition(new THREE.Vector3());
-    // Carry over the air rotation (none on the ground)
-    const angvel = this.grounded ? new THREE.Vector3() : this.airOmega.clone();
-
-    this.object.updateMatrixWorld(true);
-    this.liftClear();
-    this.ragdoll = new Ragdoll(
-      this.physics,
-      this.person,
-      this.stance,
-      this.skiModels,
-      this.velocity,
-      angvel,
-      com,
-    );
+    this.ragdoll?.goLimp(this.velocity);
     this.mode = 'tumbling';
     this.tumbleTime = 0;
     this.stillTime = 0;
@@ -557,38 +972,16 @@ export class Skier {
     this.pitch = 0;
     this.flipVel = 0;
     this.lean = 0;
-
-    // From here the ragdoll places every part in world space. Straighten the
-    // model's own transforms so the rig frame is world-aligned, sitting at
-    // the torso; sync() then writes positions relative to it.
-    this.object.quaternion.identity();
-    this.body.rotation.set(0, 0, 0);
-    this.stance.quaternion.identity();
-    this.syncRagdoll();
-
-    this.onLand?.('Crash!', false);
+    this.bounceTimer = 0;
+    this.squashGrace = 0;
+    this.onLand?.('Crash!', false, 0);
   }
 
-  /**
-   * Before handing over to the ragdoll, lift the skier until neither body
-   * nor skis overlap the snow (skis arriving tilted against the slope can
-   * end up half buried). Rapier would otherwise blast the parts apart.
-   */
-  private liftClear(): void {
-    const step = 0.05;
-    for (let i = 0; i < 30 && (this.bodyHitsSnow() || this.skisHitSnow()); i++) {
-      this.object.position.y += step;
-      this.object.updateMatrixWorld(true);
-    }
-  }
-
-  /** Follow the ragdoll: the model sits at the torso, parts placed around it. */
+  /** Follow the ragdoll while tumbling (the hidden controller rig tags along). */
   private syncRagdoll(): void {
     const ragdoll = this.ragdoll!;
-    const torso = ragdoll.torsoPosition(tmpPos);
-    // object -> body (+COM) -> rig (-COM): the rig's origin is object.position
-    this.object.position.copy(torso);
-    ragdoll.sync(torso);
+    this.object.position.copy(ragdoll.torsoPosition(tmpPos));
+    ragdoll.sync();
     this.velocity.copy(ragdoll.torsoMotion().velocity);
   }
 
@@ -596,6 +989,8 @@ export class Skier {
     const ragdoll = this.ragdoll!;
     ragdoll.update(dt);
     this.syncRagdoll();
+    this.bottoms.update(dt);
+    this.top.update(dt);
     this.tumbleTime += dt;
 
     // "Settled" means the torso is no longer tumbling over, not stopped: on a
@@ -643,24 +1038,50 @@ export class Skier {
    */
   private updateGround(dt: number, input: Controls): void {
     const p = this.object.position;
+
+    // Boing: the squash from a hard landing springs back into a hop
+    if (this.bounceTimer > 0) {
+      this.bounceTimer -= dt;
+      if (this.bounceTimer <= 0) {
+        this.velocity.addScaledVector(this.footprintNormal(p.x, p.z, tmpN), this.bounceSpeed);
+        this.secondary.compress.velocity += STRETCH_KICK;
+        this.onBounce?.();
+      }
+    }
     let speed = this.velocity.length();
+
+    // On a rail? (Its top under us, and we're up on it, not beside it below.)
+    const rail = railAt(p.x, p.z, this.railContact);
+    const grinding = !!rail && p.y >= rail.top - 0.05;
+    if (grinding) {
+      if (this.grindTime === 0) this.grindAcross = 0;
+      this.grindTime += dt;
+      this.lastGrind = { time: 0, across: 0 };
+      // Skis across the bar (a boardslide) or along it (a 50-50)
+      if (Math.abs(this.forward(tmpFwd).dot(rail.dir)) < 0.5) this.grindAcross += dt;
+    } else if (this.grindTime > 0) {
+      this.lastGrind = { time: this.grindTime, across: this.grindAcross };
+      this.grindTime = 0;
+    }
 
     // Steering: tighter when slow, wider at speed
     // While loading a jump (Space held), A/D wind up for a spin instead of
     // steering, and W/S shift weight instead of tucking and braking
     const loading = input.jump;
-    this.turnRate = loading ? 0 : input.steer * (TURN_RATE / (1 + speed / 25));
+    this.turnRate = loading ? 0 : input.steer * (grinding ? RAIL_TURN_RATE : TURN_RATE / (1 + speed / 25));
     this.heading += this.turnRate * dt;
 
     // The slope we're on: read a little behind us. A reading centred here
     // would straddle a sharp lip and blend the ramp with the table, sending
     // us off at half the lip's angle.
     const back = speed > 0.5 ? 0.3 / speed : 0;
-    const n = normalAt(p.x - this.velocity.x * back, p.z - this.velocity.z * back, tmpN);
+    // On a rail: its slope, and we slide along the bar whichever way the
+    // skis point (so they can turn across it, or spin)
+    const n = grinding ? tmpN.copy(rail.normal) : normalAt(p.x - this.velocity.x * back, p.z - this.velocity.z * back, tmpN);
     // Wall-like readings (beside a steep feature) are nonsense for riding on:
     // treat as flat; the wall check below stops us.
     if (n.y < MAX_SLOPE_NY) n.copy(UP);
-    const dir = this.rideDir(n, tmpDir);
+    const dir = grinding ? this.railDir(rail, tmpDir) : this.rideDir(n, tmpDir);
 
     const weightTarget = loading ? (input.brake ? 1 : 0) - (input.tuck ? 1 : 0) : 0;
     this.weight += (weightTarget - this.weight) * (1 - Math.exp(-WEIGHT_SHIFT_RATE * dt));
@@ -670,13 +1091,24 @@ export class Skier {
     const drag = input.tuck && !loading ? TUCK_DRAG : AIR_DRAG;
     let accel =
       -GRAVITY * dir.y - // the downhill part of gravity along the skis
-      SNOW_FRICTION * GRAVITY * n.y -
+      (grinding ? RAIL_FRICTION : SNOW_FRICTION) * GRAVITY * n.y -
+      (grinding ? 0 : SNOW_DRAG * speed) - // deep snow (the backcountry)
       drag * speed * speed;
-    if (input.brake && !loading) accel -= BRAKE_DECEL;
+    // Braking: a hockey stop. The skis swing round across the way we're
+    // going (the way we last steered) and skid; the further round, the
+    // harder they stop us. We keep sliding the way we were going.
+    if (input.steer !== 0 && !loading) this.skidSide = input.steer;
+    // (Held across for as long as we brake: standing across the hill holds us still)
+    const stopping = input.brake && !loading && !grinding;
+    const skidTarget = stopping ? this.skidSide * SKID_ANGLE : 0;
+    this.skid += (skidTarget - this.skid) * (1 - Math.exp(-SKID_RATE * dt));
+    if (Math.abs(this.skid) < 1e-3 && !stopping) this.skid = 0;
+    if (input.brake && !loading) accel -= BRAKE_DECEL + SKID_DECEL * Math.abs(this.skid) / SKID_ANGLE;
     // Turning scrubs off some speed, like skidding the skis round
-    accel -= TURN_SCRUB * Math.abs(input.steer) * speed;
+    if (!grinding) accel -= TURN_SCRUB * Math.abs(input.steer) * speed;
     speed = Math.max(0, speed + accel * dt);
     this.velocity.copy(dir).multiplyScalar(speed);
+    this.suspension(dt, dir, n, grinding);
 
     // Jump: charge while space is held, pop on release
     if (input.jump) this.charge = Math.min(1, this.charge + dt / CHARGE_TIME);
@@ -684,14 +1116,14 @@ export class Skier {
       const pop = POP_MIN + (POP_MAX - POP_MIN) * this.charge;
       // The legs push along the stance (perpendicular to the skis as a whole),
       // which is the footprint-averaged slope, not the point under the boots
-      const push = this.footprintNormal(p.x, p.z, tmpPush);
+      const push = grinding ? tmpPush.copy(rail.normal) : this.footprintNormal(p.x, p.z, tmpPush);
       this.velocity.addScaledVector(push, pop);
       this.poppedThisFrame = true;
       // The push goes through the feet. If the centre of mass isn't straight
       // above them, that push also starts the body rotating: angular impulse
       // = r × J, with r from the COM to the feet and J the push (mass × pop).
       // Weight back -> backflip rotation, weight forward -> frontflip.
-      const feet = this.stance.localToWorld(
+      const feet = this.person.group.localToWorld(
         tmpFeet.addVectors(this.person.joints.ankles[0], this.person.joints.ankles[1]).multiplyScalar(0.5),
       );
       const com = this.stance.localToWorld(tmpCentre.copy(this.intendedCom));
@@ -712,7 +1144,7 @@ export class Skier {
     // Where would we be if the snow weren't there? If the ground drops away
     // faster than that (a crest at speed, or a kicker lip), we're airborne.
     const pred = tmpPred.copy(p).addScaledVector(this.velocity, dt).addScaledVector(g, 0.5 * dt * dt);
-    const h = heightAt(pred.x, pred.z);
+    const h = groundAt(pred.x, pred.z); // the snow, or a rail's top
 
     if (h - pred.y > WALL) {
       // Ran into something steep (the side of a kicker): fall if fast,
@@ -723,10 +1155,12 @@ export class Skier {
     }
     if (pred.y > h + 0.02) {
       this.grounded = false;
-      // Rolled off a lip or crest: no push, so no flip; the body keeps
-      // turning at whatever rate it was carving
+      // Rolled off a lip, crest or cliff: no push, so no flip; the body
+      // keeps some of the turn it was carving. (Not all of it: with no pop
+      // to wind against, a small turn at the edge of a big cliff would
+      // become a half spin over three seconds of air.)
       this.flipMomentum = 0;
-      this.spinMomentum = this.mass.yawInertia * this.turnRate;
+      this.spinMomentum = this.mass.yawInertia * this.turnRate * ROLL_OFF_SPIN;
       this.velocity.addScaledVector(g, dt);
       p.copy(pred);
       return;
@@ -772,7 +1206,9 @@ export class Skier {
     // about the body's own long axis isn't a spin count: in a cork it
     // reverses whenever the body is upside down.)
     this.heading = this.headingFromAir();
-    this.airSpin += wrapAngle(this.heading - headingBefore);
+    const turned = wrapAngle(this.heading - headingBefore);
+    this.airSpin += turned;
+    this.spinRate = dt > 0 ? turned / dt : 0;
 
     const drag = AIR_DRAG;
     this.velocity.addScaledVector(g, dt);
@@ -896,34 +1332,90 @@ export class Skier {
     // How far the body's up direction is from the landing slope's normal:
     // what matters is matching the slope, however you got there
     const bodyUp = tmpUp.set(0, 1, 0).applyQuaternion(this.stance.getWorldQuaternion(tmpRot));
-    const flipOff = bodyUp.angleTo(this.footprintNormal(feet.x, feet.z, tmpN));
-    if (facingOff >= CLEAN_SPIN || flipOff >= CLEAN_FLIP) {
-      this.crash(`bad landing: facing off ${facingOff.toFixed(2)}, flip off ${flipOff.toFixed(2)}`);
+    // Coming down on a rail: any way round is fine (skis along it, or
+    // across it for a boardslide), as long as we're upright
+    const rail = railAt(feet.x, feet.z, this.railContact);
+    const onRail = !!rail && feet.y >= rail.top - RAIL_CATCH_BELOW;
+    const flipOff = bodyUp.angleTo(onRail ? rail.normal : this.footprintNormal(feet.x, feet.z, tmpN));
+    const bad =
+      this.current.grab > GRAB_LAND_MAX
+        ? 'landed still holding the grab'
+        : (!onRail && facingOff >= CLEAN_SPIN) || flipOff >= CLEAN_FLIP
+          ? `bad landing: facing off ${facingOff.toFixed(2)}, flip off ${flipOff.toFixed(2)}`
+          : '';
+    if (bad && this.crashes) {
+      this.crash(bad);
       return;
     }
+    // (Crashes off: ride it away; the skis swing onto the snow a bit slower)
+    const saved = !!bad;
 
+    // The skis slap onto the slope over the next moment (see updatePose),
+    // starting from how they were in the air
+    this.object.updateMatrixWorld(true);
+    const airTilt = tmpRot.copy(this.airQ);
     // Clean: back to the ground representation (object at the feet, turned
     // to the heading), feet settled onto the snow, and ride on
-    p.set(feet.x, heightAt(feet.x, feet.z), feet.z);
+    p.set(feet.x, onRail ? rail.top : heightAt(feet.x, feet.z), feet.z);
     this.object.quaternion.identity();
     this.body.quaternion.identity();
     this.airL.set(0, 0, 0);
     this.airOmega.set(0, 0, 0);
     this.switchStance = landSwitch;
-    this.heading = landSwitch ? travel + Math.PI : travel;
+    // (On a rail the skis stay pointing however they came down)
+    if (!onRail) this.heading = landSwitch ? travel + Math.PI : travel;
+    // Stance (relative to the heading) = the air orientation, so the skis
+    // start their slap from where they really were
+    this.stance.quaternion.setFromAxisAngle(UP, -this.heading).multiply(airTilt);
+    this.slapTime = saved ? SLAP_TIME * 2.5 : SLAP_TIME;
+    this.squashGrace = SQUASH_GRACE;
     this.pitch = 0;
     this.spinMomentum = 0;
     this.flipVel = 0;
     this.flipMomentum = 0;
 
-    const n = normalAt(p.x, p.z, tmpN);
-    const dir = this.rideDir(n, tmpDir);
+    const n = onRail ? tmpN.copy(rail.normal) : normalAt(p.x, p.z, tmpN);
+    // How hard we hit: speed into the slope. Really hard: squash the body
+    // right down, then (unrealistically) spring back up into a little hop.
+    const impact = -this.velocity.dot(n);
+    if (impact > HARD_LANDING) {
+      this.secondary.compress.velocity -= SQUASH_KICK;
+      this.bounceTimer = BOUNCE_DELAY;
+      // (Scaled per map: in the backcountry the ground keeps falling away
+      // below a landing, so a big hop off a cliff became a second long,
+      // crooked air)
+      this.bounceSpeed = MAP_BOUNCE * Math.min(BOUNCE_MAX, BOUNCE_MIN + (impact - HARD_LANDING) * BOUNCE_PER_IMPACT);
+    }
+    const dir = onRail ? this.railDir(rail, tmpDir) : this.rideDir(n, tmpDir);
     const along = Math.max(0, this.velocity.dot(dir));
     this.velocity.copy(dir).multiplyScalar(along);
     this.grounded = true;
 
-    const trick = trickName(this.airSpin, pitch, this.takeoffSwitch);
-    if (trick) this.onLand?.(trick, true);
+    // Back down on the rail after a hop: the slide carries on
+    if (onRail && this.lastGrind.time > 0) {
+      this.grindTime = this.lastGrind.time;
+      this.grindAcross = this.lastGrind.across;
+      this.lastGrind = { time: 0, across: 0 };
+    }
+    // Call out the trick: the rail slide we came off (if any), then the air
+    const parts: string[] = [];
+    if (this.lastGrind.time >= MIN_GRIND) {
+      const kind = this.lastGrind.across > this.lastGrind.time / 2 ? 'Boardslide' : '50-50';
+      parts.push(`${kind} ${this.lastGrind.time.toFixed(1)} s`);
+    }
+    this.lastGrind = { time: 0, across: 0 };
+    const grabbed = this.grabTime >= MIN_GRAB;
+    let trick = trickName(this.airSpin, pitch, this.takeoffSwitch);
+    const grabName = this.board ? 'Indy' : 'X-Tail';
+    if (grabbed) trick = trick ? `${trick} ${grabName}` : grabName;
+    const points = trickPoints(this.airSpin, pitch, grabbed);
+    if (saved) {
+      // A crash ridden away (crashes off): half points
+      this.onLand?.(trick ? `Sketchy ${trick}` : 'Sketchy', false, Math.round(points / 2));
+      return;
+    }
+    if (trick) parts.push(trick);
+    if (parts.length) this.onLand?.(parts.join(' + '), true, points);
   }
 
   /**
@@ -973,15 +1465,18 @@ export class Skier {
     // Skis turning under the upper body (only while riding; landing snaps
     // don't count, and in the air the body turns as one)
     const steady = this.grounded && this.prevGrounded;
-    const skiTurn = steady ? wrapAngle(this.heading - this.prevHeading) : 0;
+    const skiTurn = steady ? wrapAngle(this.heading + this.skid - this.prevHeading - this.prevSkid) : 0;
     this.prevHeading = this.heading;
+    this.prevSkid = this.skid;
     this.prevGrounded = this.grounded;
 
     // On the snow the upper body leans towards facing down the fall line
     // (skis across the hill, chest down it); riding switch the look takes
     // care of the upper body instead
     let yawTarget = 0;
-    if (this.grounded && !this.switchStance) {
+    if (!this.grounded) {
+      yawTarget = THREE.MathUtils.clamp(this.spinRate * SPIN_LEAD, -MAX_SPIN_LEAD, MAX_SPIN_LEAD);
+    } else if (!this.switchStance) {
       const n = this.tiltWorld;
       if (n.x * n.x + n.z * n.z > 0.01) {
         const fallHeading = Math.atan2(-n.x, -n.z);
@@ -1000,7 +1495,8 @@ export class Skier {
       this.body.quaternion.copy(this.airQ);
       this.stance.quaternion.identity();
     } else {
-      this.object.rotation.set(0, this.heading, 0);
+      // (Turned further while hockey-stopping: the skis swing across)
+      this.object.rotation.set(0, this.heading + this.skid, 0);
       this.body.quaternion.identity();
     }
 
@@ -1013,8 +1509,29 @@ export class Skier {
     // after a 180 off a slope they still lean down the hill, not up it.
     if (this.grounded) {
       this.footprintNormal(p.x, p.z, this.tiltWorld);
-      const n = tmpN.copy(this.tiltWorld).applyAxisAngle(UP, -this.heading);
-      this.stance.quaternion.setFromUnitVectors(UP, n);
+      const n = tmpN.copy(this.tiltWorld).applyAxisAngle(UP, -(this.heading + this.skid));
+      // Across a steep slope, don't stand square to it: stay nearer upright
+      // and tip the skis onto their edges instead (or the rider, leaning
+      // into a turn on top of a 33° side slope, put his chest in the snow)
+      const across = Math.atan2(n.x, n.y);
+      const a = Math.abs(across);
+      if (a > SIDE_TILT_FULL) {
+        const kept = Math.sign(across) * (SIDE_TILT_FULL + (a - SIDE_TILT_FULL) * SIDE_TILT_BEYOND);
+        const len = Math.hypot(n.x, n.y);
+        n.x = Math.sin(kept) * len;
+        n.y = Math.cos(kept) * len;
+        n.normalize();
+      }
+      tmpQ2.setFromUnitVectors(UP, n);
+      // Right after a landing the skis slap down onto the slope over a few
+      // hundredths of a second rather than snapping in one frame (the
+      // ragdoll stands on them: a snap would wrench its legs)
+      if (this.slapTime > 0) {
+        this.slapTime -= dt;
+        this.stance.quaternion.slerp(tmpQ2, 1 - Math.exp(-SLAP_RATE * dt));
+      } else {
+        this.stance.quaternion.copy(tmpQ2);
+      }
     }
 
     if (!input) return;
@@ -1024,9 +1541,19 @@ export class Skier {
     // Lean into the turn, more at speed; upright in the air
     // Riding switch, the body's left is the travel direction's right
     const sideSign = this.switchStance ? -1 : 1;
-    const targetLean = this.grounded
-      ? sideSign * input.steer * MAX_LEAN * Math.min(1, this.speed / 15)
-      : 0;
+    // (In physical mode the whole body tips into the turn by itself, so the
+    // pose adds no lean of its own.)
+    // Leaning in as far as the turn pulls outwards (balanced: lean angle =
+    // atan(sideways pull / g)), at least the usual amount. (With a fixed
+    // lean, fast turns pulled ~2 g outwards against ~25° of lean and threw
+    // the body to the outside: across a steep slope, into the snow uphill.)
+    // (The pull is smoothed: a held carve builds it, quick taps don't throw
+    // the body from side to side)
+    this.turnPull += (this.speed * this.turnRate - this.turnPull) * (1 - Math.exp(-PULL_RATE * dt));
+    const usual = input.steer * MAX_LEAN * Math.min(1, this.speed / 15);
+    const balanced = Math.sign(this.turnPull) * Math.min(MAX_BALANCE_LEAN, Math.atan(Math.abs(this.turnPull) / GRAVITY));
+    const lean = Math.abs(balanced) > Math.abs(usual) && Math.sign(balanced) === Math.sign(usual) ? balanced : usual;
+    const targetLean = this.grounded && !this.ride ? sideSign * lean : 0;
     // Riding switch: look back over a shoulder to see where you're going.
     // Steering picks the side: to see the way you're turning, look over the
     // opposite shoulder (the body's right is travel's left).
@@ -1038,11 +1565,26 @@ export class Skier {
     // Eased so changes flow rather than snap.
     const t = this.target;
     if (!this.grounded) {
-      // S: ball tuck (fast flips). A/D: arms hugged in, upright (fast spins).
+      // S: for flips: arching back in a backflip (or with no flip going),
+      // folded into a ball in a frontflip. A/D: arms hugged in,
+      // upright (fast spins).
       // W: open up (slow everything, and windmill to spot the landing).
+      // Space: the X tail grab (over everything else).
       Object.assign(
         t,
-        input.brake ? AIR_TUCK : input.tuck ? AIR_OPEN : input.steer !== 0 ? AIR_SPIN : AIR,
+        input.jump
+          ? this.board
+            ? AIR_INDY
+            : AIR_GRAB
+          : input.brake
+            ? this.flipMomentum >= 0
+              ? AIR_ARCH
+              : AIR_TUCK
+            : input.tuck
+              ? AIR_OPEN
+              : input.steer !== 0
+                ? AIR_SPIN
+                : AIR,
       );
     } else {
       Object.assign(t, input.tuck && !input.jump ? TUCK : RIDING);
@@ -1056,15 +1598,36 @@ export class Skier {
     // Switch: shoulders open up towards the look, head turns the rest
     t.look = this.switchStance && this.grounded ? this.lookSide : 0;
     t.twist += t.look * SWITCH_TWIST;
+    if (this.board) {
+      // Sideways on the board: shoulders opened a little towards the nose
+      // (the tail, riding switch) and the head turned to look where we're
+      // going. Leaning into a turn tips the body over the toe or heel edge
+      // instead: forward over the toes, back onto the heels.
+      const way = this.switchStance ? -1 : 1;
+      t.twist += way * BOARD_TWIST - t.look * SWITCH_TWIST; // (instead of the skis' switch look)
+      t.look = way * BOARD_LOOK;
+      t.torsoPitch -= t.lean * BOARD_EDGE_PITCH;
+      t.hipBack += t.lean * BOARD_EDGE_HIPS;
+      t.lean = 0;
+    }
+    if (this.grounded && this.skid !== 0) {
+      // Hockey stop: shoulders stay facing down the hill while the legs
+      // swing across, sinking a little and leaning back against the slide
+      const amount = Math.abs(this.skid) / SKID_ANGLE;
+      t.twist -= this.skid * SKID_COUNTER;
+      t.lean += Math.sign(this.skid) * SKID_LEAN * amount;
+      lerpPose(t, CROUCH, 0.35 * amount, t);
+    }
     lerpPose(this.current, t, ease, this.current);
     this.updateSecondary(dt);
     if (this.grounded) {
       // Where the mass would be without the springy layer (for the pop)
       this.person.pose(this.current);
-      this.person.massProperties(SKIS_IN_STANCE, SKI_MASS, SKI_LENGTH, tmpMass);
+      this.person.massProperties(...this.skiRods(), tmpMass);
       this.intendedCom.copy(tmpMass.com);
     }
     this.person.pose(this.current, this.secondary);
+    this.placeSkis();
     this.updateMass(!this.grounded);
   }
 }

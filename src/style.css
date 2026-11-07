@@ -18,6 +18,13 @@ canvas {
   border-radius: 6px;
   pointer-events: none;
 }
+#hud .map {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #ff7a1c;
+}
 #hud .power {
   margin-top: 6px;
   width: 160px;
@@ -57,4 +64,511 @@ canvas {
 }
 #trick.crash {
   color: #c0392b;
+}
+/* A crash ridden away (crashes off): half points */
+#trick.sketchy {
+  color: #d4a017;
+}
+#trick.finish {
+  color: #c0392b;
+  font-size: 64px;
+}
+#trick .nuts-earned {
+  margin-top: 4px;
+  font-size: 30px;
+  color: #a0642a;
+}
+#trick .points {
+  margin-top: 6px;
+  font-size: 30px;
+  color: #1b2a3a;
+}
+#hud .score {
+  font-size: 26px;
+  font-weight: 800;
+}
+#hud .score .label {
+  font-size: 13px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+
+/* First person: the view through orange-tinted goggles, a little darker
+   towards the edges of the lens */
+#goggles {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  display: none;
+  mix-blend-mode: multiply;
+  background: radial-gradient(ellipse 80% 75% at 50% 50%, rgb(255, 226, 190) 55%, rgb(236, 172, 112) 100%);
+}
+#goggles.on {
+  display: block;
+}
+
+.hidden {
+  display: none !important;
+}
+
+/* Menu, over the live scene */
+#start {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  padding: 24px 6vw;
+  box-sizing: border-box;
+  overflow-y: auto;
+  scrollbar-width: none;
+  background: linear-gradient(90deg, rgba(12, 22, 36, 0.8) 0%, rgba(12, 22, 36, 0.5) 45%, rgba(12, 22, 36, 0.05) 80%);
+  color: #fff;
+  font: 500 16px/1.4 system-ui, sans-serif;
+}
+#start .page {
+  display: none;
+  width: 100%;
+  max-width: 560px;
+  margin: auto 0; /* centred when it fits, scrolls from the top when it doesn't */
+  animation: menu-in 0.25s ease-out;
+}
+#start[data-page='main'] .page.main,
+#start[data-page='maps'] .page.maps,
+#start[data-page='store'] .page.store,
+#start[data-page='controls'] .page.controls {
+  display: block;
+}
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateX(-12px);
+  }
+}
+/* The logo: JIBNUT in white, its letters sitting a little crooked on a rough,
+   uneven wooden plank, the whole thing tipped slightly */
+#start .logo {
+  display: inline-block;
+  transform: rotate(-3deg);
+  transform-origin: left bottom;
+  filter: drop-shadow(0 6px 18px rgba(0, 0, 0, 0.35));
+}
+#start .title {
+  margin: 0;
+  display: flex;
+  align-items: flex-end;
+  padding: 0 0.12em;
+  font: 900 clamp(64px, 13vw, 140px) / 0.8 system-ui, sans-serif;
+  letter-spacing: -0.02em;
+}
+#start .title span {
+  display: inline-block;
+  transform-origin: 50% 100%;
+}
+/* Each letter sits on its own bit of the plank's lumpy top */
+#start .title span:nth-child(1) { transform: translateY(0.02em) rotate(-4deg); }
+#start .title span:nth-child(2) { transform: translateY(-0.03em) rotate(3deg); }
+#start .title span:nth-child(3) { transform: translateY(0.01em) rotate(-2deg); }
+#start .title span:nth-child(4) { transform: translateY(-0.02em) rotate(5deg); }
+#start .title span:nth-child(5) { transform: translateY(0.03em) rotate(-3deg); }
+#start .title span:nth-child(6) { transform: translateY(-0.01em) rotate(4deg); }
+#start .plank {
+  position: relative;
+  height: clamp(18px, 2.6vw, 30px);
+  margin: -0.04em -0.35em 0 -0.25em;
+  background:
+    /* knots */
+    radial-gradient(ellipse 18px 6px at 22% 55%, rgba(60, 32, 12, 0.7), transparent 70%),
+    radial-gradient(ellipse 12px 5px at 71% 40%, rgba(60, 32, 12, 0.6), transparent 70%),
+    /* grain */
+    repeating-linear-gradient(
+      178deg,
+      rgba(255, 220, 170, 0.12) 0 2px,
+      rgba(80, 45, 18, 0.18) 2px 3px,
+      transparent 3px 7px
+    ),
+    linear-gradient(180deg, #b98348 0%, #9a6532 45%, #7a4c22 100%);
+  /* rough, uneven edges: thicker at one end, chipped corners, a lumpy top */
+  clip-path: polygon(
+    0% 18%, 6% 8%, 17% 12%, 29% 2%, 41% 9%, 52% 4%, 63% 11%, 74% 3%, 86% 9%, 95% 0%, 100% 14%,
+    99% 58%, 100% 82%, 93% 100%, 78% 92%, 61% 100%, 44% 94%, 27% 100%, 12% 90%, 2% 97%, 0% 70%
+  );
+}
+#start .nail {
+  position: absolute;
+  top: 42%;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, #d9dde2, #5d6168 70%);
+}
+#start .nail:nth-child(1) { left: 4%; }
+#start .nail:nth-child(2) { left: 49%; top: 50%; }
+#start .nail:nth-child(3) { right: 5%; top: 36%; }
+#start .tagline {
+  margin-top: 18px;
+  font-size: 15px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+#start .menu {
+  margin-top: 40px;
+  display: grid;
+  gap: 12px;
+  max-width: 300px;
+}
+#start button {
+  font: 800 20px/1 system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  padding: 16px 28px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.1s, background 0.1s, border-color 0.1s;
+}
+#start button:hover,
+#start button:focus-visible {
+  background: #ff7a1c;
+  border-color: #ff7a1c;
+  transform: translateX(4px);
+  outline: none;
+}
+#start .crumb {
+  font-weight: 800;
+  letter-spacing: 0.4em;
+  font-size: 13px;
+  color: #ff7a1c;
+  text-transform: uppercase;
+}
+#start h2 {
+  margin: 6px 0 20px;
+  font: 900 clamp(40px, 7vw, 64px) / 1 system-ui, sans-serif;
+  text-transform: uppercase;
+}
+#start .cards {
+  display: grid;
+  gap: 14px;
+}
+#start .card {
+  padding: 20px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+#start .card h3 {
+  margin: 0;
+  font: 900 40px/1 system-ui, sans-serif;
+  text-transform: uppercase;
+}
+#start .card p {
+  margin: 8px 0 0;
+  opacity: 0.9;
+}
+#start .features {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+#start .features li {
+  font-size: 13px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+#start .play {
+  margin-top: 18px;
+  background: #ff7a1c;
+  border-color: #ff7a1c;
+  box-shadow: 0 6px 20px rgba(255, 122, 28, 0.35);
+}
+#start .play:hover,
+#start .play:focus-visible {
+  background: #ff8f3f;
+  border-color: #fff;
+}
+#start .back {
+  margin-top: 22px;
+  font-size: 15px;
+  padding: 10px 20px;
+}
+#start .keys {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+#start .keys dt {
+  white-space: nowrap;
+  opacity: 0.9;
+}
+#start .keys dd {
+  margin: 0;
+  opacity: 0.85;
+}
+#start .keys .group {
+  margin-top: 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #ff7a1c;
+  opacity: 1;
+}
+#start kbd {
+  display: inline-block;
+  min-width: 1.4em;
+  padding: 1px 6px;
+  margin-right: 3px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  font: 700 12px/1.4 system-ui, sans-serif;
+  text-align: center;
+}
+@media (max-width: 520px) {
+  #start .keys {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  #start .keys dd {
+    margin-bottom: 6px;
+  }
+}
+
+/* Settings (on the controls page): a row with a name, help and a switch */
+#start .setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+#start .setting-name {
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+#start .setting-help {
+  font-size: 13px;
+  opacity: 0.75;
+}
+#start .switch {
+  position: relative;
+  flex: none;
+  width: 92px;
+  height: 40px;
+  padding: 0 12px 0 0;
+  border-radius: 999px;
+  text-align: right;
+  font-size: 14px;
+}
+#start .switch .knob {
+  position: absolute;
+  top: 5px;
+  left: 6px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left 0.15s;
+}
+#start .switch[aria-checked='true'] {
+  background: #ff7a1c;
+  border-color: #ff7a1c;
+  padding: 0 0 0 12px;
+  text-align: left;
+}
+#start .switch[aria-checked='true'] .knob {
+  left: 58px;
+}
+#start .switch:hover,
+#start .switch:focus-visible {
+  transform: none;
+  border-color: #fff;
+}
+
+/* Nuts on the home screen */
+#start .nuts {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
+  padding: 6px 14px 6px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  font-weight: 800;
+  font-size: 18px;
+}
+#start .nut-icon {
+  width: 22px;
+  height: 26px;
+  border-radius: 50% 50% 46% 46% / 40% 40% 60% 60%;
+  background:
+    linear-gradient(180deg, #6b3f1d 0 28%, transparent 28%),
+    radial-gradient(ellipse at 40% 60%, #d9a05b, #a0642a 70%);
+}
+
+/* Store */
+#start .wallet {
+  margin: 0 0 16px;
+}
+#start .items {
+  display: grid;
+  gap: 12px;
+}
+#start .item {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+#start .item.wearing {
+  border-color: #ff7a1c;
+}
+#start .swatch {
+  flex: none;
+  width: 54px;
+  height: 54px;
+  border-radius: 10px;
+  background: var(--c);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
+  /* a little garment silhouette: pants or a jacket */
+  -webkit-mask: var(--shape) center / contain no-repeat;
+  mask: var(--shape) center / contain no-repeat;
+}
+#start .swatch[data-kind='pants'] {
+  --shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M9 3h22l3 34h-11l-3-20-3 20H6z'/%3E%3C/svg%3E");
+}
+#start .swatch[data-kind='jacket'] {
+  --shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M14 3l6 4 6-4 11 7-3 12-4-2v17H10V20l-4 2-3-12z'/%3E%3C/svg%3E");
+}
+#start .swatch[data-kind='board'] {
+  --shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect x='13' y='1' width='14' height='38' rx='7'/%3E%3C/svg%3E");
+  transform: rotate(-35deg);
+}
+#start .item-info {
+  flex: 1;
+  min-width: 0;
+}
+#start .item h3 {
+  margin: 0;
+  font: 800 18px/1.2 system-ui, sans-serif;
+}
+#start .price {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-weight: 800;
+  opacity: 0.9;
+}
+#start .price .nut-icon {
+  width: 14px;
+  height: 17px;
+}
+#start .buy {
+  flex: none;
+  font-size: 15px;
+  padding: 12px 18px;
+  background: #ff7a1c;
+  border-color: #ff7a1c;
+}
+#start .item.owned .buy {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+#start .buy:disabled {
+  cursor: default;
+  opacity: 0.55;
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+  transform: none;
+  font-size: 13px;
+}
+#start .store-help {
+  margin: 14px 0 0;
+  font-size: 13px;
+  opacity: 0.7;
+}
+@media (max-width: 520px) {
+  #start .item {
+    flex-wrap: wrap;
+  }
+  #start .buy {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+/* Locker: what you own, slot by slot */
+#start[data-page='locker'] .page.locker {
+  display: block;
+}
+#start[data-page='locker'] {
+  /* lighter on the right, where the rider stands */
+  background: linear-gradient(90deg, rgba(12, 22, 36, 0.78) 0%, rgba(12, 22, 36, 0.45) 40%, rgba(12, 22, 36, 0) 60%);
+}
+#start .locker {
+  max-width: 440px;
+}
+#start .slot + .slot {
+  margin-top: 16px;
+}
+#start .slot-name {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #ff7a1c;
+  margin-bottom: 6px;
+}
+#start .choices {
+  display: grid;
+  gap: 8px;
+}
+#start .choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+#start .choice .swatch {
+  width: 34px;
+  height: 34px;
+}
+#start .choice.on {
+  background: rgba(255, 122, 28, 0.25);
+  border-color: #ff7a1c;
+}
+#start .choice.on::after {
+  content: '✓';
+  margin-left: auto;
+  color: #ff7a1c;
+}
+#start .swatch[data-kind='skis'] {
+  --shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect x='9' y='1' width='8' height='38' rx='4'/%3E%3Crect x='23' y='1' width='8' height='38' rx='4'/%3E%3C/svg%3E");
+}
+#start .swatch[data-kind='shorts'] {
+  --shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M8 8h24l3 22h-12l-3-10-3 10H5z'/%3E%3C/svg%3E");
+}
+#start .swatch[data-kind='tee'] {
+  --shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M14 5l6 3 6-3 10 6-4 7-4-2v19H12V16l-4 2-4-7z'/%3E%3C/svg%3E");
 }

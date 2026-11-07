@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import type { SecondaryMotion } from './secondary';
+import { createHeadgear } from './helmet';
+import { createBootCuff } from './gear';
+import { BOARD_STANCE } from './boardModel';
 
 /**
  * Placeholder human: a three-part spine (pelvis, abdomen, chest), a sphere
@@ -10,6 +13,12 @@ import type { SecondaryMotion } from './secondary';
  *
  * Local frame: feet on the skis at y ≈ 0, facing -Z, +X to the right.
  */
+
+/** Green: the cloth shorts, and the thighs and hips under them. */
+export const PANTS_COLOR = 0x3f8f3a;
+/** The T-shirt (see tee.ts), and the torso under it. */
+export const SHIRT_COLOR = 0xf1efe8;
+const SKIN_COLOR = 0xf0c8a0;
 
 /** Body measurements in metres, shared by meshes, collision and physics. */
 export const BODY = {
@@ -59,24 +68,40 @@ export interface Pose {
   torsoPitch: number; // forward lean of the torso, radians
   lean: number; // sideways lean into a turn, radians (+ = left)
   armsOut: number; // -1 = hugged to the chest, 0 = hands forward holding poles, 1 = out for balance
+  armsUp: number; // 0..1: reaching up over the head, along the spine
   twist: number; // upper body turned about the spine, radians (+ = to the left)
   look: number; // head turned over a shoulder: +1 = fully over the left, -1 = over the right
+  grab: number; // 0..1: the X tail grab (skis crossed, right hand on the right ski's tail; see GRAB)
 }
 
 // hipBack values are solved so the centre of mass (body + skis) sits right
 // over the feet, except the two leans: 8 cm behind / ahead of the feet.
-export const RIDING: Pose = { hipHeight: 0.86, hipBack: 0.14, torsoPitch: 0.35, lean: 0, armsOut: 0, twist: 0, look: 0 };
-export const TUCK: Pose = { hipHeight: 0.62, hipBack: 0.27, torsoPitch: 1.0, lean: 0, armsOut: 0, twist: 0, look: 0 };
-export const CROUCH: Pose = { hipHeight: 0.6, hipBack: 0.23, torsoPitch: 0.7, lean: 0, armsOut: 0, twist: 0, look: 0 };
-export const AIR: Pose = { hipHeight: 0.78, hipBack: 0.12, torsoPitch: 0.3, lean: 0, armsOut: 1, twist: 0, look: 0 };
+export const RIDING: Pose = { hipHeight: 0.86, hipBack: 0.14, torsoPitch: 0.35, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
+export const TUCK: Pose = { hipHeight: 0.62, hipBack: 0.27, torsoPitch: 1.0, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
+export const CROUCH: Pose = { hipHeight: 0.6, hipBack: 0.23, torsoPitch: 0.7, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
+export const AIR: Pose = { hipHeight: 0.78, hipBack: 0.12, torsoPitch: 0.3, lean: 0, armsOut: 1, twist: 0, look: 0, armsUp: 0, grab: 0 };
 // Loading a jump with weight shifted: back (for a backflip) or forward
-export const LEAN_BACK: Pose = { hipHeight: 0.62, hipBack: 0.23, torsoPitch: 0.25, lean: 0, armsOut: 0, twist: 0, look: 0 };
-export const LEAN_FORWARD: Pose = { hipHeight: 0.62, hipBack: 0.18, torsoPitch: 1.05, lean: 0, armsOut: 0, twist: 0, look: 0 };
+export const LEAN_BACK: Pose = { hipHeight: 0.62, hipBack: 0.23, torsoPitch: 0.25, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
+export const LEAN_FORWARD: Pose = { hipHeight: 0.62, hipBack: 0.18, torsoPitch: 1.05, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
 // In the air: pulled into a tight ball (rotates fast) or stretched out (slow)
-export const AIR_TUCK: Pose = { hipHeight: 0.42, hipBack: 0.27, torsoPitch: 1.0, lean: 0, armsOut: 0, twist: 0, look: 0 };
+// Backflip arch: the whole body bowed backwards like a banana. Legs straight
+// and trailing (hips pushed forward of the feet; hip height past full leg
+// reach, so the leg solver straightens them rather than bending the knees), back arching more
+// towards the top, head back, arms reaching up over the head along the arch.
+// Far less compact than the forward ball: the skier flips as fast as with
+// the ball anyway (see Skier.updateMass), so backflip tricks stay as tuned.
+export const AIR_ARCH: Pose = { hipHeight: 1.05, hipBack: -0.25, torsoPitch: -0.7, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 1, grab: 0 };
+export const AIR_TUCK: Pose = { hipHeight: 0.42, hipBack: 0.27, torsoPitch: 1.0, lean: 0, armsOut: 0, twist: 0, look: 0, armsUp: 0, grab: 0 };
 // In the air, upright with arms hugged in: the fastest shape for spinning
-export const AIR_SPIN: Pose = { hipHeight: 0.86, hipBack: 0.07, torsoPitch: 0.1, lean: 0, armsOut: -1, twist: 0, look: 0 };
-export const AIR_OPEN: Pose = { hipHeight: 0.98, hipBack: 0.01, torsoPitch: -0.05, lean: 0, armsOut: 1, twist: 0, look: 0 };
+export const AIR_SPIN: Pose = { hipHeight: 0.86, hipBack: 0.07, torsoPitch: 0.1, lean: 0, armsOut: -1, twist: 0, look: 0, armsUp: 0, grab: 0 };
+// The X tail grab: crouched, knees up, the skis crossed into an X, the right
+// foot pulled up with its ski's tail tilted up, and the right hand reaching
+// down beside the hip to hold it. (The legs and skis are placed by GRAB.)
+export const AIR_GRAB: Pose = { hipHeight: 0.66, hipBack: 0.16, torsoPitch: 0.4, lean: -0.3, armsOut: 0.6, twist: -0.35, look: 0, armsUp: 0, grab: 1 };
+// Snowboard grab (an Indy): knees pulled up, crouched, the back hand
+// reaching down to the toe edge between the bindings. (Feet placed by pose.)
+export const AIR_INDY: Pose = { hipHeight: 0.66, hipBack: 0.18, torsoPitch: 1.0, lean: 0, armsOut: 0.6, twist: 0.5, look: 0, armsUp: 0, grab: 1 };
+export const AIR_OPEN: Pose = { hipHeight: 0.98, hipBack: 0.01, torsoPitch: -0.05, lean: 0, armsOut: 1, twist: 0, look: 0, armsUp: 0, grab: 0 };
 
 export function lerpPose(a: Pose, b: Pose, t: number, out: Pose): Pose {
   out.hipHeight = a.hipHeight + (b.hipHeight - a.hipHeight) * t;
@@ -84,8 +109,10 @@ export function lerpPose(a: Pose, b: Pose, t: number, out: Pose): Pose {
   out.torsoPitch = a.torsoPitch + (b.torsoPitch - a.torsoPitch) * t;
   out.lean = a.lean + (b.lean - a.lean) * t;
   out.armsOut = a.armsOut + (b.armsOut - a.armsOut) * t;
+  out.armsUp = a.armsUp + (b.armsUp - a.armsUp) * t;
   out.twist = a.twist + (b.twist - a.twist) * t;
   out.look = a.look + (b.look - a.look) * t;
+  out.grab = a.grab + (b.grab - a.grab) * t;
   return out;
 }
 
@@ -107,16 +134,52 @@ export class Segment {
   }
 
   /** Stretch between joint a and joint b (only the direction is used). */
-  place(a: THREE.Vector3, b: THREE.Vector3): void {
+  /**
+   * Between joints a and b. For a limb, hinge is the axis its middle joint
+   * (knee, elbow) bends about (see limbHinge): the part is turned about its
+   * own length so its x axis lies along it, so the limb twists as a whole
+   * (a leg with its ski) instead of keeping an arbitrary facing. Standing,
+   * that's the orientation it has anyway.
+   */
+  place(a: THREE.Vector3, b: THREE.Vector3, hinge?: THREE.Vector3): void {
     const dir = tmpDir.subVectors(b, a);
     const len = dir.length();
     this.mesh.position.copy(a).addScaledVector(dir, 0.5 * (this.length / len));
-    this.mesh.quaternion.setFromUnitVectors(UP, dir.divideScalar(len));
+    dir.divideScalar(len);
+    const q = this.mesh.quaternion.setFromUnitVectors(UP, dir);
+    if (!hinge) return;
+    const x = tmpXAxis.set(1, 0, 0).applyQuaternion(q);
+    q.premultiply(tmpYaw.setFromUnitVectors(x, hinge));
   }
 }
 
 const UP = new THREE.Vector3(0, 1, 0);
 const tmpDir = new THREE.Vector3();
+const tmpPitchQ = new THREE.Quaternion();
+const tmpSkiUp = new THREE.Vector3();
+const tmpHold = new THREE.Vector3();
+const tmpYaw = new THREE.Quaternion();
+const tmpHinge = new THREE.Vector3();
+const tmpXAxis = new THREE.Vector3();
+
+/**
+ * The X tail grab, at full strength, in the stance frame. Each leg turns
+ * (left knee and ski tip in to the right, right in to the left, so the skis
+ * cross into an X); the right foot comes up behind, heel towards the butt,
+ * which tips its ski tail-up. The skis follow the shins as stiff boots do.
+ */
+export const GRAB = {
+  yaw: [-0.55, 0.55], // left, right leg and ski: + = tip to the left
+  // Right ankle: up and back, heel towards the butt, so the tail comes up beside the hip
+  rightAnkle: new THREE.Vector3(0.2, 0.32, 0.3),
+  leftAnkle: new THREE.Vector3(-0.16, 0.18, 0),
+  /** Where the hand holds the right ski: along it from the boot (+ = towards the tail), and above its base. */
+  hold: { along: 0.5, up: 0.03 },
+};
+/** On a board, the grab pulls both feet up this far. */
+const BOARD_GRAB_LIFT = 0.26;
+/** The ski's origin (its base, under the boot) sits this far below the ankle. */
+const ANKLE_ABOVE_SKI = BODY.ankleHeight - 0.015;
 
 /** Mass, centre of mass and pitch inertia of the posed body (plus skis). */
 export interface MassProperties {
@@ -202,6 +265,19 @@ function solveLimb(
   out.copy(root).addScaledVector(u, upper * cosA).addScaledVector(v, upper * sinA);
 }
 
+/**
+ * The axis a two-part limb from root to end bends about, its middle joint
+ * pushed towards pole (as solveLimb places it): square to the plane of the
+ * limb's line and the pole. Taken from the limb's whole line, not each part,
+ * so it can't flip when a part swings past the pole (a knee pulled up above
+ * the hip). side picks which way round it runs, to match the rest pose.
+ */
+function limbHinge(root: THREE.Vector3, end: THREE.Vector3, pole: THREE.Vector3, side: number, out: THREE.Vector3): THREE.Vector3 | undefined {
+  out.subVectors(end, root).cross(pole).multiplyScalar(side);
+  if (out.lengthSq() < 1e-8) return undefined; // limb along the pole: no plane
+  return out.normalize();
+}
+
 export class Person {
   readonly group = new THREE.Group();
   readonly pelvis: Segment;
@@ -216,6 +292,28 @@ export class Person {
   readonly forearms: [Segment, Segment];
   /** Every capsule part, for building physics bodies. */
   readonly segments: Segment[];
+  /** Where each ski goes (its origin and orientation, in the pose frame), from the last pose(). */
+  readonly skiPoses = [0, 1].map(() => ({ p: new THREE.Vector3(), q: new THREE.Quaternion() }));
+  /**
+   * Riding a snowboard: the body stands sideways on it (the group turned a
+   * quarter turn: regular, left foot forward, facing the toe edge), feet
+   * wider apart, both strapped to the one board (its two halves: skiPoses).
+   */
+  board = false;
+  setBoard(on: boolean): void {
+    this.board = on;
+    this.group.rotation.y = on ? -Math.PI / 2 : 0;
+    this.pose(RIDING);
+  }
+  /** Where the grabbing hand holds its ski / the board, in that ski's (or board half's) own frame. */
+  grabHoldLocal(out: THREE.Vector3): THREE.Vector3 {
+    return this.board
+      ? out.set(0.12, 0.02, -BOARD_STANCE + 0.05) // the board's toe edge, between the bindings
+      : out.set(0, GRAB.hold.up, GRAB.hold.along);
+  }
+
+  /** Each ski's orientation relative to its shin, standing (the boot holds it so). */
+  private readonly bootRest = [new THREE.Quaternion(), new THREE.Quaternion()];
 
   // Joint positions from the last pose(), in the local frame
   readonly joints = {
@@ -232,38 +330,64 @@ export class Person {
     hands: [new THREE.Vector3(), new THREE.Vector3()],
   };
 
+  /** The body's own colours, under the cloth clothes (see dress). */
+  private readonly materials: Record<'shirt' | 'pants' | 'shins' | 'upperArms' | 'forearms', THREE.MeshStandardMaterial>;
+
+  /**
+   * Colour the body under the clothes: the same colour as what covers it,
+   * so any gap in the fabric shows clothes, not body; bare skin elsewhere.
+   * (The ragdoll's visible parts share these materials.)
+   */
+  dress(bottom: { kind: string; color: number }, top: { kind: string; color: number }): void {
+    const m = this.materials;
+    m.pants.color.setHex(bottom.color);
+    m.shins.color.setHex(bottom.kind === 'pants' ? bottom.color : SKIN_COLOR);
+    m.shirt.color.setHex(top.color);
+    m.upperArms.color.setHex(top.kind === 'jacket' ? top.color : SKIN_COLOR);
+    m.forearms.color.setHex(top.kind === 'jacket' ? top.color : SKIN_COLOR);
+  }
+
   constructor() {
-    const jacket = new THREE.MeshStandardMaterial({ color: 0xe0672f, roughness: 0.6 });
-    const pants = new THREE.MeshStandardMaterial({ color: 0x2d3a4a, roughness: 0.7 });
-    const skin = new THREE.MeshStandardMaterial({ color: 0xf0c8a0, roughness: 0.6 });
+    const shirt = new THREE.MeshStandardMaterial({ color: SHIRT_COLOR, roughness: 0.9 });
+    // Same green as the cloth snowpants worn over them, so any gap in the
+    // fabric shows pants, not body
+    const pants = new THREE.MeshStandardMaterial({ color: PANTS_COLOR, roughness: 0.85 });
+    const skin = new THREE.MeshStandardMaterial({ color: SKIN_COLOR, roughness: 0.6 });
 
     this.pelvis = new Segment(BODY.pelvis, BODY.pelvisRadius, MASS.pelvis, pants);
-    this.abdomen = new Segment(BODY.abdomen, BODY.abdomenRadius, MASS.abdomen, jacket);
-    this.chest = new Segment(BODY.chest, BODY.chestRadius, MASS.chest, jacket);
+    this.abdomen = new Segment(BODY.abdomen, BODY.abdomenRadius, MASS.abdomen, shirt);
+    this.chest = new Segment(BODY.chest, BODY.chestRadius, MASS.chest, shirt);
     this.spine = [this.pelvis, this.abdomen, this.chest];
     const pair = (len: number, r: number, m: number, mat: THREE.Material): [Segment, Segment] => [
       new Segment(len, r, m, mat),
       new Segment(len, r, m, mat),
     ];
+    // Shins and arms: bare skin, or the colour of the clothes over them
+    // (see dress), each with its own material to recolour
+    const shins = skin.clone();
+    const upperArms = skin.clone();
+    const forearms = skin.clone();
+    this.materials = { shirt, pants, shins, upperArms, forearms };
     this.thighs = pair(BODY.thigh, BODY.thighRadius, MASS.thigh, pants);
-    this.shins = pair(BODY.shin, BODY.shinRadius, MASS.shin, pants);
-    this.upperArms = pair(BODY.upperArm, BODY.upperArmRadius, MASS.upperArm, jacket);
-    this.forearms = pair(BODY.forearm, BODY.forearmRadius, MASS.forearm, jacket);
+    this.shins = pair(BODY.shin, BODY.shinRadius, MASS.shin, shins);
+    this.upperArms = pair(BODY.upperArm, BODY.upperArmRadius, MASS.upperArm, upperArms);
+    this.forearms = pair(BODY.forearm, BODY.forearmRadius, MASS.forearm, forearms);
     this.segments = [...this.spine, ...this.thighs, ...this.shins, ...this.upperArms, ...this.forearms];
 
     this.head = new THREE.Mesh(new THREE.SphereGeometry(BODY.headRadius, 20, 14), skin);
     this.head.castShadow = true;
-    // Goggles, so you can tell which way they're facing
-    const goggles = new THREE.Mesh(
-      new THREE.BoxGeometry(0.2, 0.06, 0.06),
-      new THREE.MeshStandardMaterial({ color: 0x1b2a3a, roughness: 0.2, metalness: 0.5 }),
-    );
-    goggles.position.set(0, 0.02, -BODY.headRadius + 0.02);
-    this.head.add(goggles);
+    // Black skate helmet and white goggles with an orange lens (which also
+    // show which way they're facing)
+    this.head.add(createHeadgear(BODY.headRadius));
+
+    // Ski boot cuffs on the lower shins (the shells are on the skis)
+    for (let i = 0; i < 2; i++) this.shins[i].mesh.add(createBootCuff(BODY.shin / 2, i === 0 ? -1 : 1));
 
     for (const s of this.segments) this.group.add(s.mesh);
     this.group.add(this.head);
     this.pose(RIDING);
+    // (skis flat, standing)
+    for (let i = 0; i < 2; i++) this.bootRest[i].copy(this.shins[i].mesh.quaternion).invert();
   }
 
   /**
@@ -272,14 +396,18 @@ export class Person {
    * in the same local frame), each of skiMass kg.
    */
   massProperties(skis: { p: THREE.Vector3; d: THREE.Vector3 }[], skiMass: number, skiLength: number, out: MassProperties): MassProperties {
+    // (In the frame the person stands in: on a board the body is turned,
+    // and floats up on the powder)
+    const g = this.group.quaternion;
+    const lift = this.group.position;
     const rods: Rod[] = this.segments.map((s) => ({
       m: s.mass,
       L: s.length,
       r: s.radius,
-      p: s.mesh.position,
-      d: tmpRodDir.set(0, 1, 0).applyQuaternion(s.mesh.quaternion).clone(),
+      p: s.mesh.position.clone().applyQuaternion(g).add(lift),
+      d: tmpRodDir.set(0, 1, 0).applyQuaternion(s.mesh.quaternion).applyQuaternion(g).clone(),
     }));
-    rods.push({ m: MASS.head, L: 0, r: BODY.headRadius * 0.9, p: this.head.position, d: UP });
+    rods.push({ m: MASS.head, L: 0, r: BODY.headRadius * 0.9, p: this.head.position.clone().applyQuaternion(g).add(lift), d: UP });
     for (const ski of skis) rods.push({ m: skiMass, L: skiLength, r: 0.03, p: ski.p, d: ski.d });
 
     out.mass = 0;
@@ -354,11 +482,32 @@ export class Person {
       // Legs: from the (possibly turned) hips down to the ankles on the
       // boots, which stay with the skis. Knees point between the two.
       j.hips[i].copy(j.hipCentre).addScaledVector(side, s * BODY.hipWidth);
-      j.ankles[i].set(s * BODY.stance, BODY.ankleHeight, 0);
-      const kneeDir = tmpPole.set(0, 0, -1).applyAxisAngle(UP, upperYaw * 0.5);
+      j.ankles[i].set(s * (this.board ? BOARD_STANCE : BODY.stance), BODY.ankleHeight, 0);
+      // The grab: on skis, feet and skis move to the X; on a board both feet
+      // come up together (blended in by p.grab)
+      const g = p.grab;
+      const skiYaw = this.board ? 0 : GRAB.yaw[i] * g;
+      if (g > 0) {
+        if (this.board) j.ankles[i].y += BOARD_GRAB_LIFT * g;
+        else j.ankles[i].lerp(i === 1 ? GRAB.rightAnkle : GRAB.leftAnkle, g);
+      }
+      // Knees point the way their ski goes; the whole leg turns with it
+      // (the knee is a hinge and the boot can't twist: the hip does it)
+      const kneeDir = tmpPole.set(0, 0, -1).applyAxisAngle(UP, upperYaw * 0.5 + skiYaw);
       solveLimb(j.hips[i], j.ankles[i], BODY.thigh, BODY.shin, kneeDir, j.knees[i]);
-      this.thighs[i].place(j.hips[i], j.knees[i]);
-      this.shins[i].place(j.knees[i], j.ankles[i]);
+      const knee = limbHinge(j.hips[i], j.ankles[i], kneeDir, 1, tmpHinge);
+      this.thighs[i].place(j.hips[i], j.knees[i], knee);
+      this.shins[i].place(j.knees[i], j.ankles[i], knee);
+      // The ski: flat on the snow normally (the ankle flexes over it); when
+      // grabbing, carried by the shin at the standing ankle angle
+      const ski = this.skiPoses[i];
+      ski.q.identity();
+      if (this.board) {
+        // The board runs along the line between the feet (the body's x),
+        // nose (half 0) under the left foot
+        ski.q.setFromAxisAngle(UP, Math.PI / 2);
+      } else if (g > 0) ski.q.slerp(tmpPitchQ.copy(this.shins[i].mesh.quaternion).multiply(this.bootRest[i]), g);
+      ski.p.copy(j.ankles[i]).sub(tmpSkiUp.set(0, ANKLE_ABOVE_SKI, 0).applyQuaternion(ski.q));
 
       // Arms: hands forward and low as if holding poles, or out for balance.
       // Twisting the upper body turns shoulders and arms about the spine.
@@ -372,10 +521,29 @@ export class Person {
         )
         .applyAxisAngle(UP, p.twist + upperYaw)
         .add(j.shoulders[i]);
+      if (p.armsUp > 0) {
+        // Reaching up over the head: out along the spine, a little apart
+        const overhead = tmpOut
+          .copy(j.shoulders[i])
+          .addScaledVector(spine, 0.55)
+          .addScaledVector(shoulderSide, s * 0.08);
+        hand.lerp(overhead, p.armsUp);
+      }
       if (sec) hand.add(sec.hand(i, tmpHandOff)); // trailing hands
-      solveLimb(j.shoulders[i], hand, BODY.upperArm, BODY.forearm, tmpPole.set(s * 0.6, 0, 1).applyQuaternion(yawQ), j.elbows[i]);
-      this.upperArms[i].place(j.shoulders[i], j.elbows[i]);
-      this.forearms[i].place(j.elbows[i], hand);
+      if (i === 1 && p.grab > 0) {
+        // Grabbing: the right hand goes to the right ski's tail (on a board:
+        // the toe edge)
+        const hold = this.grabHoldLocal(tmpHold)
+          .applyQuaternion(this.skiPoses[1].q)
+          .add(this.skiPoses[1].p);
+        hand.lerp(hold, p.grab);
+      }
+      const elbowDir = tmpPole.set(s * 0.6, 0, 1).applyQuaternion(yawQ);
+      solveLimb(j.shoulders[i], hand, BODY.upperArm, BODY.forearm, elbowDir, j.elbows[i]);
+      // (Elbows are hinges too: the arm twists as a whole)
+      const elbow = limbHinge(j.shoulders[i], hand, elbowDir, -1, tmpHinge);
+      this.upperArms[i].place(j.shoulders[i], j.elbows[i], elbow);
+      this.forearms[i].place(j.elbows[i], hand, elbow);
     }
   }
 

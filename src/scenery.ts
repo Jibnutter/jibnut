@@ -11,6 +11,8 @@ import {
   END_Z,
   MOUNTAIN_TOP_Z,
   MOUNTAIN_BOTTOM_Z,
+  EDGE_LIMIT,
+  IS_PARK,
 } from './terrain';
 
 /**
@@ -175,9 +177,11 @@ function createTrees(): THREE.Group {
   for (let tries = 0; spots.length < 1400 && tries < 20000; tries++) {
     const side = rand() < 0.5 ? -1 : 1;
     const z = MOUNTAIN_BOTTOM_Z + 30 + rand() * (MOUNTAIN_TOP_Z - MOUNTAIN_BOTTOM_Z);
-    const x = courseX(z) + side * (34 + Math.pow(rand(), 0.7) * 190); // clear of the course
-    if (Math.abs(x - LIFT_X) < 9) continue; // keep the lift line clear
-    if (x > LIFT_X && x < LIFT_X + 18 && (z > MAX_Z || z < FINISH_Z - 10)) continue; // station clearings
+    const x = courseX(z) + side * (EDGE_LIMIT + 11 + Math.pow(rand(), 0.7) * 190); // clear of the course
+    if (IS_PARK) {
+      if (Math.abs(x - LIFT_X) < 9) continue; // keep the lift line clear
+      if (x > LIFT_X && x < LIFT_X + 18 && (z > MAX_Z || z < FINISH_Z - 10)) continue; // station clearings
+    }
     // Patchy forest: skip where a slow wave says "clearing"
     if (Math.sin(x * 0.045) + Math.sin(z * 0.03 + 1) < -0.6) continue;
     spots.push(new THREE.Vector3(x, heightAt(x, z), z));
@@ -232,20 +236,21 @@ function bannerTexture(text: string, bg: string, fg: string): THREE.CanvasTextur
 /** Two posts and a banner across the course at world z. */
 function arch(z: number, halfSpan: number, height: number, text: string, color: string): THREE.Group {
   const group = new THREE.Group();
+  const cx = courseX(z); // (centred on the course where it bends)
   const postMat = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
   for (const side of [-1, 1]) {
-    const x = side * halfSpan;
+    const x = cx + side * halfSpan;
     const post = new THREE.Mesh(new THREE.BoxGeometry(0.6, height, 0.6), postMat);
     post.position.set(x, heightAt(x, z) + height / 2, z);
     post.castShadow = true;
     group.add(post);
   }
-  const y = Math.max(heightAt(-halfSpan, z), heightAt(halfSpan, z)) + height - 0.6;
+  const y = Math.max(heightAt(cx - halfSpan, z), heightAt(cx + halfSpan, z)) + height - 0.6;
   const banner = new THREE.Mesh(
     new THREE.PlaneGeometry(halfSpan * 2, 1.2),
     new THREE.MeshStandardMaterial({ map: bannerTexture(text, color, '#ffffff'), side: THREE.DoubleSide }),
   );
-  banner.position.set(0, y, z);
+  banner.position.set(cx, y, z);
   group.add(banner);
   return group;
 }
@@ -323,10 +328,17 @@ function edgePoles(): THREE.InstancedMesh {
 
 export class Scenery {
   readonly group = new THREE.Group();
-  private readonly lift = new Chairlift();
+  private readonly lift: Chairlift | null = IS_PARK ? new Chairlift() : null;
 
   constructor() {
-    this.group.add(this.lift.group, createTrees(), startHut(), edgePoles());
+    this.group.add(createTrees());
+    // The backcountry is just the mountain and its trees, and a finish
+    // arch down in the valley
+    if (!this.lift) {
+      this.group.add(arch(FINISH_Z, 24, 7.5, 'FINISH', '#c0392b'));
+      return;
+    }
+    this.group.add(this.lift.group, startHut(), edgePoles());
     // Banners hang high so the chase camera passes underneath
     this.group.add(arch(DECK_END_Z + 2, 8, 7.5, 'START', '#1f5fbf'));
     this.group.add(arch(FINISH_Z, 16, 7.5, 'FINISH', '#c0392b'));
@@ -343,6 +355,6 @@ export class Scenery {
   }
 
   update(dt: number): void {
-    this.lift.update(dt);
+    this.lift?.update(dt);
   }
 }

@@ -1,14 +1,14 @@
 import * as THREE from 'three';
 
 /**
- * Secondary motion: the soft, springy layer on top of the posed body.
+ * Secondary motion: intentions layered on top of the posed body.
  *
- * The posing code says where the body *wants* to be. This layer adds how a
- * real body *lags and bounces* on the way there: legs compress on landings
- * like suspension, the torso tips when you brake or accelerate, arms trail
- * like loose pendulums, the head nods, and the upper body turns separately
- * from the skis (it keeps facing where it was while the skis pivot, and
- * leans towards facing down the fall line).
+ * The ragdoll now provides the physical lag, wobble, floppy arms and head
+ * nods by itself. What's left here are things the rider *does*: absorbing a
+ * landing by folding the legs (and springing back), and turning the upper
+ * body separately from the skis (it keeps facing where it was while the skis
+ * pivot, and leans towards facing down the fall line). The torso, hand and
+ * head springs remain but are switched off (gains 0) now the ragdoll does it.
  *
  * Every part is a damped spring pushed by what the body feels: the change in
  * velocity each frame minus gravity (a "felt impulse", in m/s), given in the
@@ -54,27 +54,33 @@ class Spring {
 
 // How strongly each felt impulse (m/s) kicks each spring
 const COMPRESS_GAIN = 0.11; // m/s of hip drop speed per m/s of upward kick
-const PITCH_FROM_BRAKE = 0.08; // rad/s of torso pitch per m/s of fore/aft kick
-const PITCH_FROM_LANDING = 0.12; // the chest keeps falling on a hard landing
-const ROLL_GAIN = 0.07;
-const HAND_GAIN = 0.05; // hands trail the body
-const HEAD_GAIN = 0.1;
+const STEADY_TIME = 0.12; // s: loads lasting longer than this count as steady
+// The ragdoll's real physics now does these:
+const PITCH_FROM_BRAKE = 0;
+const PITCH_FROM_LANDING = 0;
+const ROLL_GAIN = 0;
+const HAND_GAIN = 0;
+const HEAD_GAIN = 0;
 
 export class SecondaryMotion {
   /** Hip drop (negative) or extension (positive), metres. */
-  readonly compress = new Spring(9, 0.45, -0.32, 0.08);
+  readonly compress = new Spring(9, 0.35, -0.36, 0.1);
   /** Extra forward (+) / back (-) torso pitch, radians. */
   readonly pitch = new Spring(7, 0.5, -0.5, 0.6);
   /** Extra sideways torso roll, radians (+ = left). */
   readonly roll = new Spring(7, 0.55, -0.4, 0.4);
   /** Upper body (hips up) turned relative to the skis, radians (+ = left). */
-  readonly yaw = new Spring(5, 0.75, -0.7, 0.7);
+  readonly yaw = new Spring(5, 0.6, -1.0, 1.0);
   /** Head nod, radians (+ = chin down). */
   readonly nod = new Spring(10, 0.4, -0.4, 0.5);
   /** Hand offsets from where the pose puts them, per hand, x/y/z. */
   readonly hands = [0, 1].map(() => [0, 1, 2].map(() => new Spring(5, 0.35, -0.3, 0.3)));
 
+  /** Recent average of the upward kick: steady loads (a curved ramp) aren't landings. */
+  private steadyUp = 0;
+
   reset(): void {
+    this.steadyUp = 0;
     for (const s of [this.compress, this.pitch, this.roll, this.yaw, this.nod, ...this.hands.flat()]) s.reset();
   }
 
@@ -87,7 +93,12 @@ export class SecondaryMotion {
   update(dt: number, felt: THREE.Vector3, skiTurn: number, yawTarget: number): void {
     // Kicks from the felt impulse. Upward = the snow pushing up harder than
     // usual (a landing): legs give, the chest keeps falling, the head nods.
-    this.compress.velocity -= felt.y * COMPRESS_GAIN * 9;
+    // Only sudden jolts fold the legs. A steady load, like the 2 g of a
+    // curved takeoff ramp, is taken out (it would otherwise sink the rider
+    // into a deep squat and drop the head into the ramp)
+    const jolt = felt.y - this.steadyUp;
+    this.steadyUp += (felt.y - this.steadyUp) * (1 - Math.exp(-dt / STEADY_TIME));
+    this.compress.velocity -= jolt * COMPRESS_GAIN * 9;
     this.pitch.velocity += -felt.z * PITCH_FROM_BRAKE * 7 + Math.max(0, felt.y) * PITCH_FROM_LANDING * 7;
     this.roll.velocity += felt.x * ROLL_GAIN * 7;
     this.nod.velocity += Math.max(0, felt.y) * HEAD_GAIN * 10;
@@ -99,7 +110,7 @@ export class SecondaryMotion {
     });
 
     // The upper body keeps facing where it was while the skis turn under it
-    this.yaw.value = THREE.MathUtils.clamp(this.yaw.value - skiTurn, -0.7, 0.7);
+    this.yaw.value = THREE.MathUtils.clamp(this.yaw.value - skiTurn, -1.0, 1.0);
 
     // Step the springs in small slices so stiff ones stay stable
     const steps = Math.max(1, Math.ceil(dt / (1 / 120)));

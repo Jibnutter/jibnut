@@ -2,80 +2,267 @@ import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
 
 /**
- * Slopestyle park. The course runs downhill along -Z (s = distance down the
- * course = -z): a start deck, a steep roll-in, three big tabletop jumps
- * (each bigger than the last), and a flat finish with an uphill braking
- * zone. Around it: snow berms, then the natural mountain.
+ * The maps. Each is one mountain the course runs down, along -Z
+ * (s = distance down the course = -z).
+ *
+ *   Jumpline      a slopestyle park: a start deck, a steep roll-in, three
+ *                 big tabletop jumps (each bigger than the last) and a flat
+ *                 finish with an uphill braking zone, between snow berms.
+ *   Backcountry   a steep, wild mountain: a kicker just below the start,
+ *                 then a steep face broken by three bands of rocky cliffs,
+ *                 each with a way round, down to a valley at the bottom.
  *
  * The whole surface is one smooth height function, so physics, meshes and
- * colliders all agree. The jumps are part of it: each one stands above a
- * lower side path you can ride around on, with sloped sides.
+ * colliders all agree. Features (tabletops, cliffs, the kicker) are part of
+ * it. One map is active per page load, picked from the URL (?map=...).
  */
-
-export const COURSE_HALF = 20; // half the width of the groomed course
-const BERM_START = 20; // the snow berms along each edge...
-const BERM_TOP = 24; // ...rise to their top here
-const BERM_HEIGHT = 1.4;
-/** Riders are kept between the berm tops. */
-export const EDGE_LIMIT = BERM_TOP - 1;
-
-// ---------------------------------------------------------------------------
-// The course profile, as a programme of slope angles. Each step eases the
-// slope from the previous angle to a new one over a length of course, so the
-// surface is smooth; short steps make sharp features like lips and knuckles.
-// Angles in degrees: negative = downhill. Tags mark points the code needs.
 
 type Step = [length: number, angle: number, tag?: string];
 
-const S_MIN = -80; // the mountain above the start deck
-const START_ANGLE = -22;
-const PROGRAM: Step[] = [
-  [45, -22],
-  [20, 0], // ease onto the start deck
-  [17, 0, 'deck-end'],
-  [8, -27], // drop into the roll-in
-  [32, -27],
+/**
+ * A band of cliffs across the slope at a tagged point: above it the slope
+ * flattens into a bench (raised up to `depth`), which then drops `depth`
+ * metres in a near-vertical rock face back to the mountain. Across the
+ * course it spans u = from..to (metres right of the centreline), tapering
+ * off at its ends: ride round it there.
+ */
+interface Cliff {
+  tag: string;
+  depth: number;
+  bench: number; // m of bench above the drop
+  from: number;
+  to: number;
+}
 
-  // Jump 1
-  [10, -14],
-  [16, -14, 'j1:a'], // approach
-  [12, 24], // takeoff: curves up to a 24° lip
-  [0.8, -4, 'j1:lip'],
-  [15, -4, 'j1:knuckle'], // 15 m table
-  [4, -32],
-  [28, -32], // landing
-  [16, -10, 'j1:c'], // flattens into the run-out
+/** A kicker (a short, steep jump ramp) ending in its lip at a tagged point. */
+interface Kicker {
+  tag: string;
+  height: number; // of the lip above the slope
+  length: number;
+  halfWidth: number;
+}
 
-  // Jump 2 (the run-out bends right to get here)
-  [40, -10, 'j2:a'],
-  [13, 26],
-  [0.8, -4, 'j2:lip'],
-  [18, -4, 'j2:knuckle'], // 18 m table
-  [4, -33],
-  [32, -33],
-  [16, -10, 'j2:c'],
+/** What the menu shows about a map. */
+export interface MapInfo {
+  id: string;
+  name: string;
+  description: string;
+  features: string[];
+}
 
-  // Jump 3: the biggest (after a bend back left)
-  [40, -10, 'j3:a'],
-  [14, 28],
-  [0.8, -4, 'j3:lip'],
-  [21, -4, 'j3:knuckle'], // 21 m table
-  [4, -34],
-  [36, -34],
-  [18, -10, 'j3:c'],
+interface MapDef extends MapInfo {
+  sMin: number; // the mountain starts this far above the start
+  startAngle: number;
+  program: Step[]; // slope angles (degrees; negative = downhill) down the course
+  /** Tabletop jumps standing above a side path: tags j:a, j:lip, j:knuckle, j:c (j = 1, 2, ...). */
+  tabletops: number[]; // half-width of each one's deck
+  bends: (tag: Record<string, number>) => [s: number, x: number][];
+  courseHalf: number; // half the width of the groomed course (park markings)
+  bermStart: number; // where the edge berms (or the wild mountain) begin ...
+  bermTop: number; // ... and rise to their top
+  bermHeight: number;
+  edgeLimit: number; // riders are kept this close to the centreline
+  meshHalf: number; // fine terrain mesh: this far either side of the centreline
+  meshCell: number;
+  /** Rolls and lumps on the riding surface itself (m), from this far down. */
+  wild: { amount: number; from: string };
+  cliffs: Cliff[];
+  kicker?: Kicker;
+  /** A park: lift, start and finish arches, fencing, marker poles. */
+  park: boolean;
+  /** How much of the quirky hop after a hard landing (1 = full). */
+  bounce: number;
+  /** Untracked deep snow holding the skis back (1/s: m/s² per m/s of speed). */
+  snowDrag: number;
+  /** Where the menu's camera circles: the feature at this tag, offset across. */
+  showcase: { tag: string; x: number };
+}
 
-  // Finish
-  [20, -6],
-  [15, 0, 'finish'],
-  [40, 0],
-  [10, 10, 'brake'], // uphill braking zone
-  [22, 10, 'end'],
-  [10, 20],
-  [40, 20],
-];
+const JUMPLINE: MapDef = {
+  id: 'jumpline',
+  name: 'Jumpline',
+  description: 'A slopestyle line down the mountain: three tabletops, each bigger than the last, in deep powder.',
+  features: ['3 tabletop jumps: 15, 18 and 21 m', 'Down rail beside the first jump', 'Deep powder'],
+  sMin: -80,
+  startAngle: -22,
+  // The course profile, as a programme of slope angles. Each step eases the
+  // slope from the previous angle to a new one over a length of course, so
+  // the surface is smooth; short steps make sharp features like lips and
+  // knuckles. Tags mark points the code needs.
+  program: [
+    [45, -22],
+    [20, 0], // ease onto the start deck
+    [17, 0, 'deck-end'],
+    [8, -27], // drop into the roll-in
+    [32, -27],
 
-const JUMP_HALF_WIDTH = [8, 9, 10]; // half the width of each jump's deck
-const JUMP_SIDE = 5; // the sides slope down over this many metres
+    // Jump 1
+    [10, -14],
+    [16, -14, '1:a'], // approach
+    [12, 24], // takeoff: curves up to a 24° lip
+    [0.8, -4, '1:lip'],
+    [15, -4, '1:knuckle'], // 15 m table
+    [4, -32],
+    [28, -32], // landing
+    [16, -10, '1:c'], // flattens into the run-out
+
+    // Jump 2 (the run-out bends right to get here)
+    [40, -10, '2:a'],
+    [13, 26],
+    [0.8, -4, '2:lip'],
+    [18, -4, '2:knuckle'], // 18 m table
+    [4, -33],
+    [32, -33],
+    [16, -10, '2:c'],
+
+    // Jump 3: the biggest (after a bend back left)
+    [40, -10, '3:a'],
+    [14, 28],
+    [0.8, -4, '3:lip'],
+    [21, -4, '3:knuckle'], // 21 m table
+    [4, -34],
+    [36, -34],
+    [18, -10, '3:c'],
+
+    // Finish
+    [20, -6],
+    [15, 0, 'finish'],
+    [40, 0],
+    [10, 10, 'brake'], // uphill braking zone
+    [22, 10, 'end'],
+    [10, 20],
+    [40, 20],
+  ],
+  tabletops: [8, 9, 10],
+  // The centreline wanders left and right; each jump sits on a straight
+  // stretch, so the bends are in the roll-in and run-outs
+  bends: (t) => [
+    [-80, 0],
+    [t['deck-end'], 0],
+    [t['1:a'] - 4, -8], // roll-in eases left
+    [t['1:knuckle'] + 18, -8],
+    [t['2:a'] - 4, 8], // run-out bends right
+    [t['2:knuckle'] + 20, 8],
+    [t['3:a'] - 4, -4], // and back left
+    [t['3:knuckle'] + 24, -4],
+    [t['finish'], 0], // straightens out for the finish
+  ],
+  courseHalf: 20,
+  bermStart: 20,
+  bermTop: 24,
+  bermHeight: 1.4,
+  edgeLimit: 23,
+  meshHalf: 27,
+  meshCell: 0.5,
+  wild: { amount: 0, from: 'deck-end' },
+  cliffs: [],
+  park: true,
+  bounce: 1,
+  snowDrag: 0, // groomed
+  showcase: { tag: '1:lip', x: 4 },
+};
+
+const BACKCOUNTRY: MapDef = {
+  id: 'backcountry',
+  name: 'Backcountry',
+  description: 'No park, no lift: a steep, wild face broken by bands of rocky cliffs. Hit the kicker off the top, then pick your drops.',
+  features: ['Kicker below the start', '3 cliff bands: 7, 10 and 14 m drops', 'Steep: up to 33°'],
+  sMin: -70,
+  startAngle: -26,
+  program: [
+    [40, -26], // the summit ridge above
+    [20, -18], // easing onto a steep shoulder ...
+    [10, -18, 'deck-end'], // ... where you start
+    [14, -21], // steepening towards the kicker
+    [8, -21, 'kick'], // the kicker's lip
+    [14, -32], // then the face drops away (the landing)
+    [36, -32],
+    [10, -28, 'c1'], // cliff band 1
+    [30, -31],
+    [12, -27],
+    [10, -27, 'c2'], // cliff band 2
+    [36, -33],
+    [14, -29],
+    [10, -29, 'c3'], // cliff band 3: the big one
+    [40, -33],
+    [30, -24],
+    [40, -14],
+    [30, -6, 'finish'], // the valley
+    [30, -3],
+    [10, 8, 'brake'],
+    [22, 9, 'end'],
+    [10, 18],
+    [40, 18],
+  ],
+  tabletops: [],
+  // The face swings a little left, back right, then out into the valley
+  bends: (t) => [
+    [-70, 0],
+    [t['kick'] + 6, 0],
+    [t['c1'] + 10, -10],
+    [t['c2'] + 10, 6],
+    [t['c3'] + 30, -6],
+    [t['finish'], 0],
+  ],
+  courseHalf: 20,
+  // No berms: open mountain all the way across
+  bermStart: 70,
+  bermTop: 90,
+  bermHeight: 0,
+  edgeLimit: 62,
+  meshHalf: 72,
+  meshCell: 0.6,
+  wild: { amount: 0.8, from: 'kick' },
+  cliffs: [
+    // Each band covers part of the face; ride round it at the open end
+    // (Benches ~2.2x the drop: long enough to run out level to the edge)
+    { tag: 'c1', depth: 7, bench: 16, from: -34, to: 12 },
+    { tag: 'c2', depth: 10, bench: 22, from: -8, to: 40 },
+    { tag: 'c3', depth: 14, bench: 31, from: -42, to: 24 },
+  ],
+  // (Tall for its length: on the steep run-in its lip still points up, ~+12°)
+  kicker: { tag: 'kick', height: 2.3, length: 7, halfWidth: 3.5 },
+  park: false,
+  bounce: 0.4,
+  // Deep, untracked powder: it holds you back, so even the steepest pitches
+  // top out around 70-80 km/h (on groomed snow they'd pass 110)
+  snowDrag: 0.12,
+  showcase: { tag: 'c1', x: -6 },
+};
+
+/** Every map, in menu order. */
+export const MAPS: MapInfo[] = [JUMPLINE, BACKCOUNTRY].map(({ id, name, description, features }) => ({
+  id,
+  name,
+  description,
+  features,
+}));
+
+/** The map this page load runs (?map=<id>; Jumpline if none). */
+const M: MapDef = (() => {
+  const loc = (globalThis as { location?: { search: string } }).location;
+  const id = loc ? new URLSearchParams(loc.search).get('map') : null;
+  return [JUMPLINE, BACKCOUNTRY].find((m) => m.id === id) ?? JUMPLINE;
+})();
+export const MAP: MapInfo = MAPS.find((m) => m.id === M.id)!;
+/** Whether this map is a park (lift, arches, fencing). */
+export const IS_PARK = M.park;
+/** How much of the quirky landing hop this map has. */
+export const MAP_BOUNCE = M.bounce;
+/** How hard this map's snow holds the skis back (1/s). */
+export const SNOW_DRAG = M.snowDrag;
+
+export const COURSE_HALF = M.courseHalf;
+const BERM_START = M.bermStart;
+const BERM_TOP = M.bermTop;
+const BERM_HEIGHT = M.bermHeight;
+/** Riders are kept this close to the centreline (between the berms in the park). */
+export const EDGE_LIMIT = M.edgeLimit;
+
+const S_MIN = M.sMin;
+const START_ANGLE = M.startAngle;
+const PROGRAM = M.program;
+const JUMP_SIDE = 5; // the sides of a tabletop slope down over this many metres
 
 // --- Build the profile into lookup tables
 
@@ -118,9 +305,9 @@ const halfWidth = new Float32Array(N); // jump deck half-width at each s (0 = no
   // Side path: under each jump, a straight cut from the start of the takeoff
   // to the end of the landing, never higher than the jump itself
   sideH.set(mainH);
-  for (let j = 1; j <= 3; j++) {
-    const a = tags[`j${j}:a`];
-    const c = tags[`j${j}:c`];
+  for (let j = 1; j <= M.tabletops.length; j++) {
+    const a = tags[`${j}:a`];
+    const c = tags[`${j}:c`];
     const ia = Math.round((a - S_MIN) / DS);
     const ic = Math.round((c - S_MIN) / DS);
     for (let i = ia; i <= ic; i++) {
@@ -130,7 +317,7 @@ const halfWidth = new Float32Array(N); // jump deck half-width at each s (0 = no
       const s = S_MIN + i * DS;
       const w = THREE.MathUtils.smoothstep(s, a, a + 8) * (1 - THREE.MathUtils.smoothstep(s, c - 8, c));
       sideH[i] = mainH[i] - w * Math.max(0, mainH[i] - chord);
-      halfWidth[i] = JUMP_HALF_WIDTH[j - 1];
+      halfWidth[i] = M.tabletops[j - 1];
     }
   }
 
@@ -158,22 +345,11 @@ const halfWidth = new Float32Array(N); // jump deck half-width at each s (0 = no
 }
 
 // ---------------------------------------------------------------------------
-// The course's centreline wanders left and right. Waypoints give its x at
-// points down the course; between them it eases smoothly across. Each jump
-// sits on a straight stretch, so the bends are in the roll-in and run-outs.
+// The course's centreline wanders left and right. Waypoints (from the map)
+// give its x at points down the course; between them it eases smoothly
+// across.
 
-const BENDS: [s: number, x: number][] = [
-  [S_MIN, 0],
-  [tags['deck-end'], 0],
-  [tags['j1:a'] - 4, -8], // roll-in eases left
-  [tags['j1:knuckle'] + 18, -8],
-  [tags['j2:a'] - 4, 8], // run-out bends right
-  [tags['j2:knuckle'] + 20, 8],
-  [tags['j3:a'] - 4, -4], // and back left
-  [tags['j3:knuckle'] + 24, -4],
-  [tags['finish'], 0], // straightens out for the finish
-  [S_MAX, 0],
-];
+const BENDS: [s: number, x: number][] = [...M.bends(tags), [S_MAX, 0]];
 const centreX = new Float32Array(N);
 const centreSlope = new Float32Array(N); // dx/ds of the centreline
 {
@@ -227,13 +403,30 @@ export interface Jump {
   endZ: number;
   halfWidth: number;
 }
-export const JUMPS: Jump[] = [1, 2, 3].map((j) => ({
-  startZ: zAt(tags[`j${j}:a`]),
-  lipZ: zAt(tags[`j${j}:lip`]),
-  knuckleZ: zAt(tags[`j${j}:knuckle`]),
-  endZ: zAt(tags[`j${j}:c`]),
-  halfWidth: JUMP_HALF_WIDTH[j - 1],
-}));
+/** The map's jumps, in order down the course: tabletops, or a kicker (no table: knuckle = lip). */
+export const JUMPS: Jump[] = M.kicker
+  ? [
+      {
+        startZ: zAt(tags[M.kicker.tag] - M.kicker.length),
+        lipZ: zAt(tags[M.kicker.tag]),
+        knuckleZ: zAt(tags[M.kicker.tag]),
+        endZ: zAt(tags[M.kicker.tag] + 30),
+        halfWidth: M.kicker.halfWidth,
+      },
+    ]
+  : M.tabletops.map((hw, k) => ({
+      startZ: zAt(tags[`${k + 1}:a`]),
+      lipZ: zAt(tags[`${k + 1}:lip`]),
+      knuckleZ: zAt(tags[`${k + 1}:knuckle`]),
+      endZ: zAt(tags[`${k + 1}:c`]),
+      halfWidth: hw,
+    }));
+
+/** Where the menu's camera circles (world x, z). */
+export const SHOWCASE = (() => {
+  const z = zAt(tags[M.showcase.tag]);
+  return { x: courseX(z) + M.showcase.x, z };
+})();
 
 // ---------------------------------------------------------------------------
 // Height
@@ -256,6 +449,58 @@ function mountainNoise(x: number, z: number, ax: number): number {
   return amount * (3 * noise(x / 70, z / 70) + 1 * noise(x / 20 + 50, z / 20));
 }
 
+/**
+ * The map's own features, as height added to the slope at course
+ * coordinates (s down, u across): cliff bands, the kicker, and the rolls
+ * and lumps of wild terrain.
+ */
+function features(s: number, u: number, x: number, z: number): number {
+  let h = 0;
+  if (M.wild.amount > 0) {
+    // Rolls and lumps, fading in below where they start
+    const fade = THREE.MathUtils.smoothstep(s, tags[M.wild.from] + 6, tags[M.wild.from] + 26);
+    if (fade > 0) h += fade * M.wild.amount * (0.7 * noise(x / 28 + 300, z / 28) + 0.3 * noise(x / 9 + 400, z / 9));
+  }
+  for (let k = 0; k < M.cliffs.length; k++) {
+    const c = M.cliffs[k];
+    // The band's edge wanders a little up and down the slope
+    const edge = tags[c.tag] + 2.5 * noise(u / 14, 40 + k * 17);
+    const d = s - edge;
+    if (d < -c.bench || d > 1.2) continue;
+    // Across: full height over the band, tapering off at its ends
+    const taper = Math.max(6, c.depth);
+    const across = THREE.MathUtils.smoothstep(u, c.from - taper, c.from) * (1 - THREE.MathUtils.smoothstep(u, c.to, c.to + taper));
+    if (across <= 0) continue;
+    // Down: the bench rises (flattening the slope above the drop), then the
+    // face drops back. The rise eases in, then climbs steadily: so the
+    // bench runs out about level to its edge. (Curving up all the way, the
+    // edge pointed up to 28° uphill: a launch ramp, throwing riders onto
+    // their backs on the steep slope below.)
+    const t = (d + c.bench) / c.bench;
+    const rise = d <= 0 ? benchRise(t) : 1 - THREE.MathUtils.smoothstep(d, 0, 1.2);
+    h += c.depth * rise * across;
+  }
+  if (M.kicker) {
+    const k = M.kicker;
+    const d = s - tags[k.tag];
+    if (d > -k.length && d < 0.5 && Math.abs(u) < k.halfWidth + 1.5) {
+      const across = 1 - THREE.MathUtils.smoothstep(Math.abs(u), k.halfWidth, k.halfWidth + 1.5);
+      // Curving up to the lip, then straight down at its back
+      const t = (d + k.length) / k.length;
+      const up = d <= 0 ? t * t : 1 - THREE.MathUtils.smoothstep(d, 0, 0.5);
+      h += k.height * up * across;
+    }
+  }
+  return h;
+}
+
+/** A cliff's bench, 0 -> 1 along it: easing in over the first 40%, then straight. */
+function benchRise(t: number): number {
+  const a = 0.4;
+  const k = 1 / (1 - a / 2); // the steady part's slope (the whole rise is 1)
+  return t < a ? (k * t * t) / (2 * a) : k * (a / 2 + (t - a));
+}
+
 /** Terrain height at world (x, z). Physics, meshes and colliders all use this. */
 export function heightAt(x: number, z: number): number {
   // Work in course coordinates: u across the course from its centreline,
@@ -266,8 +511,9 @@ export function heightAt(x: number, z: number): number {
   const slope = lookup(centreSlope, s0);
   const offset = x - lookup(centreX, s0);
   const s = s0 + offset * slope;
-  const ax = Math.abs(offset) / Math.sqrt(1 + slope * slope); // distance across, square to the course
-  const side = lookup(sideH, s);
+  const u = offset / Math.sqrt(1 + slope * slope); // distance across, square to the course (+ = right)
+  const ax = Math.abs(u);
+  const side = lookup(sideH, s) + features(s, u, x, z);
 
   // On the course: the side path, raised into a jump deck near the middle
   let course = side;
@@ -284,6 +530,17 @@ export function heightAt(x: number, z: number): number {
   return course + (outside - course) * t + mountainNoise(x, z, ax);
 }
 
+/**
+ * Deep powder lies on top of the surface the skis ride on (heightAt): this
+ * deep on average, so the skis are buried in it, and gently lumpy.
+ */
+export const POWDER_DEPTH = 0.09;
+
+/** Top of the powder at (x, z): what you see (riding uses heightAt). */
+export function powderAt(x: number, z: number): number {
+  return heightAt(x, z) + POWDER_DEPTH + 0.03 * noise(x / 3 + 200, z / 3) + 0.015 * noise(x / 1.2, z / 1.2 + 90);
+}
+
 /** Surface normal at (x, z), from finite differences of heightAt. */
 export function normalAt(x: number, z: number, out = new THREE.Vector3()): THREE.Vector3 {
   const e = 0.25;
@@ -295,11 +552,11 @@ export function normalAt(x: number, z: number, out = new THREE.Vector3()): THREE
 // ---------------------------------------------------------------------------
 // Geometry (no DOM needed, so physics can build colliders from it in tests)
 
-const COURSE_MESH_HALF = 27; // fine mesh: the course and its berms (follows the centreline)
-const COURSE_CELL = 0.5;
+const COURSE_MESH_HALF = M.meshHalf; // fine mesh: the course and its berms (follows the centreline)
+const COURSE_CELL = M.meshCell;
 const OUTER_HALF = 240; // coarse mesh: the mountain around it
 const OUTER_CELL = 4;
-const OUTER_HIDE = 25; // this close to the centreline the coarse mesh sinks out of sight
+const OUTER_HIDE = COURSE_MESH_HALF - 2; // this close to the centreline the coarse mesh sinks out of sight
 
 /**
  * A grid over x0..x1, z0..z1 with heights from fn, as indexed triangles.
@@ -393,6 +650,17 @@ function snowTexture(groomed: boolean): THREE.CanvasTexture {
       ctx.fillRect(x, 0, 1.5, size);
     }
   }
+  // Soft drifts: faint broad shading, like wind-blown powder
+  for (let i = 0; i < 40; i++) {
+    const x = rand() * size;
+    const y = rand() * size;
+    const r = 20 + rand() * 50;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(190, 205, 225, ${0.05 + rand() * 0.05})`);
+    g.addColorStop(1, 'rgba(190, 205, 225, 0)');
+    ctx.fillStyle = g;
+    for (const ox of [-size, 0, size]) for (const oy of [-size, 0, size]) ctx.fillRect(x - r + ox, y - r + oy, 2 * r, 2 * r);
+  }
   // Sparkle and unevenness
   for (let i = 0; i < 1800; i++) {
     const shade = rand() < 0.5 ? '255,255,255' : '170,185,205';
@@ -416,7 +684,7 @@ function dyeLine(z: number, x0: number, x1: number, width: number, material: THR
   const steps = Math.ceil((x1 - x0) / 0.5);
   for (let i = 0; i <= steps; i++) {
     const x = x0 + ((x1 - x0) * i) / steps;
-    for (const dz of [-width / 2, width / 2]) pos.push(x, heightAt(x, z + dz) + 0.03, z + dz);
+    for (const dz of [-width / 2, width / 2]) pos.push(x, powderAt(x, z + dz) + 0.02, z + dz);
     if (i < steps) {
       const a = i * 2;
       idx.push(a, a + 1, a + 2, a + 2, a + 1, a + 3);
@@ -431,22 +699,50 @@ function dyeLine(z: number, x0: number, x1: number, width: number, material: THR
   return mesh;
 }
 
+/** The terrain as you see it: covered in powder (lifted to powderAt). */
+function powderGeometry(geo: THREE.BufferGeometry): THREE.BufferGeometry {
+  const out = geo.clone();
+  const pos = out.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const z = pos.getZ(i);
+    // (The coarse mesh's part hidden under the course stays sunk)
+    const h = heightAt(x, z);
+    if (Math.abs(pos.getY(i) - h) < 0.5) pos.setY(i, powderAt(x, z));
+  }
+  out.computeVertexNormals();
+  // Snow won't stick to steep faces: cliffs show bare dark rock, blending
+  // through snow-dusted rock on the slightly gentler edges
+  const nrm = out.attributes.normal as THREE.BufferAttribute;
+  const color = new Float32Array(pos.count * 3);
+  const snow = new THREE.Color(0xffffff);
+  const rock = new THREE.Color(0x4a4744).convertSRGBToLinear();
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const bare = THREE.MathUtils.smoothstep(1 - nrm.getY(i), 0.42, 0.62); // ~55° to ~68°
+    c.lerpColors(snow, rock, bare).toArray(color, i * 3);
+  }
+  out.setAttribute('color', new THREE.BufferAttribute(color, 3));
+  return out;
+}
+
 export function createTerrain(): THREE.Group {
   const { course, outer } = terrainGeometry();
   const group = new THREE.Group();
 
-  const courseMesh = new THREE.Mesh(
-    course,
-    new THREE.MeshStandardMaterial({ map: snowTexture(true), roughness: 0.85 }),
-  );
-  const outerMesh = new THREE.Mesh(
-    outer,
-    new THREE.MeshStandardMaterial({ map: snowTexture(false), roughness: 0.95 }),
-  );
+  const powder = new THREE.MeshStandardMaterial({ map: snowTexture(false), roughness: 0.9, vertexColors: true });
+  const courseMesh = new THREE.Mesh(powderGeometry(course), powder);
+  const outerMesh = new THREE.Mesh(powderGeometry(outer), powder);
   for (const m of [courseMesh, outerMesh]) {
     m.receiveShadow = true;
     group.add(m);
   }
+
+  // The finish line: red dye across the course, under the arch
+  const finishZ = zAt(tags['finish']);
+  const fx = courseX(finishZ);
+  const span = M.park ? COURSE_HALF + 1 : 26;
+  group.add(dyeLine(finishZ, fx - span, fx + span, 0.6, new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.9, side: THREE.DoubleSide })));
 
   // Blue dye across each jump's lip and knuckle, as in a real park
   const dye = new THREE.MeshStandardMaterial({ color: 0x2f6fd6, roughness: 0.9, side: THREE.DoubleSide });
@@ -454,7 +750,7 @@ export function createTerrain(): THREE.Group {
     const w = j.halfWidth + 1;
     const cx = courseX(j.lipZ); // jumps sit on straight stretches
     group.add(dyeLine(j.lipZ + 0.3, cx - w, cx + w, 0.5, dye));
-    group.add(dyeLine(j.knuckleZ - 0.5, cx - w, cx + w, 0.5, dye));
+    if (j.knuckleZ !== j.lipZ) group.add(dyeLine(j.knuckleZ - 0.5, cx - w, cx + w, 0.5, dye));
   }
   return group;
 }
