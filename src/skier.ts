@@ -9,7 +9,7 @@
 // file for details.
 
 import * as THREE from 'three';
-import { heightAt, normalAt, courseX, EDGE_LIMIT, MAX_Z, MAP_BOUNCE, SNOW_DRAG, JUMPS } from './terrain';
+import { heightAt, normalAt, courseX, EDGE_LIMIT, MAX_Z, MAP_BOUNCE, SNOW_DRAG, JUMPS, onPlacedKicker } from './terrain';
 import type { Controls } from './input';
 import { RAPIER, type Physics } from './physics';
 import { Ragdoll } from './ragdoll';
@@ -698,7 +698,7 @@ export class Skier {
    */
   private suspension(dt: number, dir: THREE.Vector3, n: THREE.Vector3, grinding: boolean): void {
     const p = this.object.position;
-    const onJump = JUMPS.some((j) => p.z <= j.startZ + 2 && p.z >= j.knuckleZ - 2);
+    const onJump = JUMPS.some((j) => p.z <= j.startZ + 2 && p.z >= j.knuckleZ - 2) || onPlacedKicker(p.x, p.z);
     let hit = 0;
     if (this.hasRideDir && !grinding && !onJump) {
       hit = this.speed * Math.max(0, tmpBump.subVectors(dir, this.lastRideDir).dot(n));

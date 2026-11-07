@@ -20,10 +20,12 @@ import './style.css';
 import { Skier } from './skier';
 import { ChaseCamera } from './chaseCamera';
 import { readControls } from './input';
-import { createTerrain, MAP, SHOWCASE, heightAt, courseX, START_Z, FINISH_Z, END_Z, DECK_END_Z } from './terrain';
+import { createTerrain, MAP, SHOWCASE, CAN_BUILD, heightAt, courseX, START_Z, FINISH_Z, END_Z, DECK_END_Z } from './terrain';
 import { Scenery } from './scenery';
 import { createRails } from './rails';
 import { Powder } from './powder';
+import { Kickers } from './kickers';
+import { BuildMode } from './buildMode';
 import { StartScreen } from './startScreen';
 import * as progress from './progress';
 import { Physics } from './physics';
@@ -96,7 +98,7 @@ hud.innerHTML = `
   <div class="score"><span class="label">Score</span> <span class="value">0</span></div>
   <div class="speed"></div>
   <div class="power"><div class="fill"></div></div>
-  <div class="hint">Esc menu &amp; controls · R restart · C camera · P physical skiing · K colliders</div>`;
+  <div class="hint">Esc menu &amp; controls · R restart · C camera${CAN_BUILD ? ' · M build kickers' : ''} · P physical skiing · K colliders</div>`;
 document.body.appendChild(hud);
 const speedEl = hud.querySelector<HTMLDivElement>('.speed')!;
 const scoreEl = hud.querySelector<HTMLSpanElement>('.score .value')!;
@@ -143,6 +145,16 @@ function restart(): void {
   powder.clear(); // fresh snow for the new run
   chase.snap();
 }
+// Kickers you place in the backcountry, and build mode (M) for placing them
+const kickers = new Kickers(physics);
+scene.add(kickers.group);
+const building = new BuildMode(camera, kickers, renderer.domElement, scene);
+const buildEl = document.createElement('div');
+buildEl.id = 'build';
+buildEl.className = 'hidden';
+document.body.appendChild(buildEl);
+building.onStatus = (text) => (buildEl.textContent = text);
+
 // Start screen: up first; Esc brings it back
 const startScreen = new StartScreen();
 // Wear what was bought in the store, and change when it changes
@@ -192,10 +204,32 @@ window.addEventListener('keydown', (e) => {
       goggleTint.classList.remove('on');
     }
     skier.view.visible = false;
+    if (building.active) {
+      building.exit();
+      buildEl.classList.add('hidden');
+    }
     startScreen.show();
     return;
   }
   if (!playing) return; // the game's keys only work in the game
+  if (e.code === 'KeyM' && CAN_BUILD) {
+    // Build mode on or off (the backcountry only)
+    if (building.active) {
+      building.exit();
+      buildEl.classList.add('hidden');
+      chase.snap();
+    } else {
+      if (chase.firstPerson) {
+        chase.toggle();
+        sunlight.updateFrustums();
+        goggleTint.classList.remove('on');
+      }
+      building.enter();
+      buildEl.classList.remove('hidden');
+    }
+    return;
+  }
+  if (building.active) return; // (riding keys wait while building)
   if (e.code === 'KeyR') restart();
   if (e.code === 'KeyP' && !skier.board) {
     // Fully physical skiing on/off (from the start of a fresh run)
@@ -225,7 +259,10 @@ renderer.setAnimationLoop((time) => {
   const dt = Math.min(timer.getDelta(), 0.05); // avoid huge steps after a tab switch
 
   scenery.update(dt);
-  if (playing) {
+  if (playing && building.active) {
+    // Build mode: the rider waits; the camera flies (see BuildMode)
+    building.update(dt);
+  } else if (playing) {
     const finished = skier.mode === 'riding' && skier.object.position.z < FINISH_Z;
     if (finished && !crossed) {
       // Over the finish line: call out the run's score

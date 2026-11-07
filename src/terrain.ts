@@ -555,6 +555,91 @@ function builtAt(x: number, z: number): number {
 
 /** Terrain height at world (x, z). Physics, meshes and colliders all use this. */
 export function heightAt(x: number, z: number): number {
+  return groundHeight(x, z) + placedKickerHeight(x, z);
+}
+
+// ---------------------------------------------------------------------------
+// Kickers placed by the player (Backcountry build mode, see kickers.ts):
+// part of the ground, so riding, landing and the snow all follow them.
+
+export interface PlacedKicker {
+  x: number; // the middle of the ramp
+  z: number;
+  yaw: number; // the way you ride it: forward is (-sin yaw, 0, -cos yaw)
+}
+/**
+ * Kicker size: ramp length and half-width (the sides slope off over SIDE).
+ * Its height depends on the slope it's built on: tall enough that the lip
+ * points LIP_ANGLE above level (a fixed height barely kicked up at all on a
+ * steep face), within MIN_HEIGHT..MAX_HEIGHT.
+ */
+export const KICKER = { length: 7, halfWidth: 3.2, side: 1.6, lipAngle: 0.26, minHeight: 1.2, maxHeight: 3.6 };
+const placed: (PlacedKicker & { height: number })[] = [];
+/** Replace the placed kickers (the ground changes at once). */
+export function setPlacedKickers(list: PlacedKicker[]): void {
+  placed.length = 0;
+  for (const k of list) placed.push({ ...k, height: kickerHeightFor(k) });
+}
+
+/**
+ * How tall a kicker here must be: a ramp curving up from the slope (its
+ * curve y = c t², t = 0..1 along it) leaves the lip at the ground's angle
+ * plus 2c / length; c is the height that makes that LIP_ANGLE above level.
+ */
+export function kickerHeightFor(k: PlacedKicker): number {
+  const fx = -Math.sin(k.yaw);
+  const fz = -Math.cos(k.yaw);
+  const half = KICKER.length / 2;
+  const foot = groundHeight(k.x - fx * half, k.z - fz * half);
+  const lip = groundHeight(k.x + fx * half, k.z + fz * half);
+  const groundDrop = (foot - lip) / KICKER.length; // tan of the slope down the ramp's way
+  const h = ((Math.tan(KICKER.lipAngle) + groundDrop) * KICKER.length) / 2;
+  return THREE.MathUtils.clamp(h, KICKER.minHeight, KICKER.maxHeight);
+}
+/** Placed kickers can only go on maps without a park (the backcountry). */
+export const CAN_BUILD = !M.park;
+
+/**
+ * How far along a placed kicker's ramp (x, z) is: 0 at its foot, 1 at the
+ * lip (-1: not on one). Its local frame, for the shape and for the rider.
+ */
+function kickerLocal(k: PlacedKicker, x: number, z: number, out: { along: number; across: number }): void {
+  const fx = -Math.sin(k.yaw);
+  const fz = -Math.cos(k.yaw);
+  const dx = x - k.x;
+  const dz = z - k.z;
+  out.along = dx * fx + dz * fz + KICKER.length / 2; // 0 at the foot, length at the lip
+  out.across = Math.abs(dx * fz - dz * fx);
+}
+const tmpLocal = { along: 0, across: 0 };
+
+/** Height a placed kicker adds at (x, z). */
+function placedKickerHeight(x: number, z: number): number {
+  let h = 0;
+  for (const k of placed) {
+    kickerLocal(k, x, z, tmpLocal);
+    const { along, across } = tmpLocal;
+    if (along < 0 || along > KICKER.length + 0.5 || across > KICKER.halfWidth + KICKER.side) continue;
+    const sides = 1 - THREE.MathUtils.smoothstep(across, KICKER.halfWidth, KICKER.halfWidth + KICKER.side);
+    // Curving up to the lip, then straight down at its back
+    const t = Math.min(1, along / KICKER.length);
+    const up = along <= KICKER.length ? t * t : 1 - THREE.MathUtils.smoothstep(along - KICKER.length, 0, 0.5);
+    h = Math.max(h, k.height * up * sides);
+  }
+  return h;
+}
+
+/** Is (x, z) on a placed kicker's ramp? (Its curve is a takeoff, not a bump.) */
+export function onPlacedKicker(x: number, z: number): boolean {
+  for (const k of placed) {
+    kickerLocal(k, x, z, tmpLocal);
+    if (tmpLocal.along > -1 && tmpLocal.along < KICKER.length + 1 && tmpLocal.across < KICKER.halfWidth + KICKER.side) return true;
+  }
+  return false;
+}
+
+/** The ground without placed kickers: the map's own shape. */
+export function groundHeight(x: number, z: number): number {
   courseCoords(x, z);
   const s = cs;
   const u = cu;

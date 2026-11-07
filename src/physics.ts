@@ -80,6 +80,19 @@ export class Physics {
     }
   }
 
+  /** A static triangle-mesh collider (e.g. a placed kicker), from a geometry in world space. */
+  addStaticMesh(geo: THREE.BufferGeometry): RAPIER.Collider {
+    const vertices = new Float32Array(geo.attributes.position.array);
+    const indices = new Uint32Array(geo.index!.array);
+    return this.world.createCollider(
+      RAPIER.ColliderDesc.trimesh(vertices, indices, RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES).setFriction(0.5),
+    );
+  }
+
+  removeCollider(collider: RAPIER.Collider): void {
+    this.world.removeCollider(collider, false);
+  }
+
   /** Does a shape at this pose overlap the terrain? */
   shapeHits(shape: RAPIER.Shape, pos: THREE.Vector3, rot: THREE.Quaternion): boolean {
     let hit = false;
