@@ -131,6 +131,13 @@ export class StartScreen {
         </dl>
         <button type="button" class="back" data-go="main">Back</button>
       </section>`;
+    // The small print, along the bottom of the front page
+    const legal = document.createElement('footer');
+    legal.className = 'legal';
+    legal.innerHTML = `Jibnut © 2026 Frans Ljung · Free software under the
+      <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener">GNU GPL v3 or later</a>
+      · <a href="https://github.com/Jibnutter/jibnut" target="_blank" rel="noopener">Source code</a>`;
+    this.el.querySelector('.page.main')!.appendChild(legal);
     document.body.appendChild(this.el);
     progress.onProgress(() => this.refresh());
     this.refresh();

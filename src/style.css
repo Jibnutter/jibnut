@@ -578,3 +578,19 @@ canvas {
 #start .swatch[data-kind='tee'] {
   --shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M14 5l6 3 6-3 10 6-4 7-4-2v19H12V16l-4 2-4-7z'/%3E%3C/svg%3E");
 }
+
+/* The small print on the front page: copyright and license */
+#start .legal {
+  margin-top: 36px; /* under the menu (never over it, however short the window) */
+  max-width: 420px;
+  font-size: 11px;
+  line-height: 1.4;
+  opacity: 0.55;
+}
+#start .legal a {
+  color: inherit;
+}
+#start .legal a:hover {
+  opacity: 1;
+  color: #ff7a1c;
+}
