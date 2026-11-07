@@ -8,6 +8,8 @@
 // any later version. It is distributed WITHOUT ANY WARRANTY; see the LICENSE
 // file for details.
 
+import { DEFAULT_DESIGN, type BikeDesign } from './bikeModel';
+
 /**
  * What the player has earned and bought, kept in this browser
  * (localStorage): Nuts (the currency: finishing a run earns half its
@@ -55,6 +57,8 @@ interface Saved {
   nuts: number;
   owned: string[];
   wearing: { bottom: string; top: string; gear: string };
+  /** The bike's frame, from the workshop. */
+  bike?: Partial<BikeDesign>;
 }
 
 function load(): Saved {
@@ -145,6 +149,16 @@ export function toggleWear(item: Item): void {
   if (!owns(item)) return;
   const def = DEFAULTS[item.slot];
   state.wearing[item.slot] = wearing(item) ? def.id : item.id;
+  changed();
+}
+
+/** The bike's frame design (the workshop). */
+export function bikeDesign(): BikeDesign {
+  return { ...DEFAULT_DESIGN, ...state.bike };
+}
+
+export function setBikeDesign(d: BikeDesign): void {
+  state.bike = { ...d };
   changed();
 }
 

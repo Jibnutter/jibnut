@@ -139,6 +139,7 @@ canvas {
 #start[data-page='main'] .page.main,
 #start[data-page='maps'] .page.maps,
 #start[data-page='builder'] .page.builder,
+#start[data-page='workshop'] .page.workshop,
 #start[data-page='store'] .page.store,
 #start[data-page='controls'] .page.controls {
   display: block;
@@ -752,4 +753,73 @@ canvas {
 }
 #editor .size {
   opacity: 0.8;
+}
+
+/* Bike workshop */
+#start[data-page='workshop'] {
+  /* lighter on the right, where the bike stands */
+  background: linear-gradient(90deg, rgba(12, 22, 36, 0.8) 0%, rgba(12, 22, 36, 0.45) 40%, rgba(12, 22, 36, 0) 60%);
+}
+#start .workshop {
+  max-width: 440px;
+}
+#start .design {
+  display: grid;
+  gap: 12px;
+}
+#start .field-name,
+#start .slider {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #ff7a1c;
+}
+#start .slider {
+  display: grid;
+  gap: 4px;
+}
+#start .slider .val {
+  color: #fff;
+  letter-spacing: 0;
+  text-transform: none;
+}
+#start .slider input {
+  width: 100%;
+  accent-color: #ff7a1c;
+}
+#start .swatches,
+#start .choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+#start .colour {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--c);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+}
+#start .colour.on {
+  border: 3px solid #fff;
+  box-shadow: 0 0 0 2px #ff7a1c;
+}
+#start .colour:hover,
+#start .colour:focus-visible {
+  background: var(--c);
+  transform: scale(1.1);
+}
+#start .opt {
+  font-size: 13px;
+  padding: 8px 12px;
+}
+#start .opt.on {
+  background: #ff7a1c;
+  border-color: #ff7a1c;
+}
+#start .opt.reset {
+  justify-self: start;
 }

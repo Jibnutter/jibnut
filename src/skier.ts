@@ -20,7 +20,7 @@ import { Top } from './top';
 import type { Outfit } from './progress';
 import { createSki, type SkiStyle } from './skiModel';
 import { createBoardHalf, BOARD_STANCE, BOARD_LENGTH } from './boardModel';
-import { createBikeHalf, animateBike, BB_HEIGHT, BIKE_MASS } from './bikeModel';
+import { createBikeHalf, animateBike, BB_HEIGHT, BIKE_MASS, type BikeDesign } from './bikeModel';
 import { groundAt, railAt, type RailContact } from './rails';
 import {
   Person,
@@ -529,6 +529,14 @@ export class Skier {
   board = false;
   /** Riding the mountain bike (instead of skis). */
   bike = false;
+
+  /** The bike's frame design (the workshop): rebuilt at once if riding it. */
+  setBikeDesign(d: BikeDesign): void {
+    this.person.setBikeDesign(d);
+    if (!this.bike) return;
+    this.bike = false; // (so setGear builds it again)
+    this.setGear('bike');
+  }
   // The bike's moving parts (see animateBike)
   private wheelRoll = 0;
   private crank = 0;
@@ -561,7 +569,7 @@ export class Skier {
       ...(on
         ? [createBoardHalf(0), createBoardHalf(1)]
         : bike
-          ? [createBikeHalf(0), createBikeHalf(1)]
+          ? [createBikeHalf(0, this.person.bikeDesign), createBikeHalf(1, this.person.bikeDesign)]
           : [createSki(-STANCE, this.skiStyle), createSki(STANCE, this.skiStyle)]),
     );
     this.skis.add(...this.skiModels);

@@ -10,9 +10,10 @@
 
 import { MAP, MAPS, CUSTOM } from './terrain';
 import { loadMaps, newMap, deleteMap, MAP_BUILDER_ENABLED } from './customMaps';
+import { DESIGN_RANGES, DEFAULT_DESIGN } from './bikeModel';
 import * as progress from './progress';
 
-export type Page = 'main' | 'maps' | 'builder' | 'locker' | 'store' | 'controls';
+export type Page = 'main' | 'maps' | 'builder' | 'locker' | 'workshop' | 'store' | 'controls';
 
 /**
  * The menu, over the live 3D scene (the camera circles the first jump while
@@ -47,6 +48,7 @@ export class StartScreen {
           <button type="button" data-go="maps">Maps</button>
           ${MAP_BUILDER_ENABLED ? '<button type="button" data-go="builder">Map builder</button>' : ''}
           <button type="button" data-go="locker">Locker</button>
+          <button type="button" data-go="workshop">Bike workshop</button>
           <button type="button" data-go="store">Store</button>
           <button type="button" data-go="controls">Controls</button>
         </nav>
@@ -86,6 +88,14 @@ export class StartScreen {
         <h2>Locker</h2>
         <div class="slots"></div>
         <p class="store-help">Get more in the Store.</p>
+        <button type="button" class="back" data-go="main">Back</button>
+      </section>
+
+      <section class="page workshop">
+        <div class="crumb">Jibnut</div>
+        <h2>Bike workshop</h2>
+        <div class="design"></div>
+        <p class="store-help">Design your mountain bike's frame. Buy the bike in the Store, ride it from the Locker.</p>
         <button type="button" class="back" data-go="main">Back</button>
       </section>
 
@@ -157,6 +167,7 @@ export class StartScreen {
       · <a href="https://github.com/Jibnutter/jibnut" target="_blank" rel="noopener">Source code</a>`;
     this.el.querySelector('.page.main')!.appendChild(legal);
     document.body.appendChild(this.el);
+    this.buildWorkshop();
     progress.onProgress(() => this.refresh());
     this.refresh();
 
@@ -235,6 +246,7 @@ export class StartScreen {
 
   /** Show the player's Nuts, and each store item's state (buy / wear / wearing). */
   private refresh(): void {
+    this.showDesign();
     const n = progress.nuts();
     for (const el of this.el.querySelectorAll('.nut-count')) el.textContent = n.toLocaleString('en-US');
     for (const item of progress.STORE) {
@@ -301,6 +313,65 @@ export class StartScreen {
       this.start(MAPS.findIndex((m) => m.id === MAP.id));
     }
   }
+
+  /** The bike workshop's controls: colours, geometry sliders and choices. */
+  private buildWorkshop(): void {
+    const box = this.el.querySelector<HTMLDivElement>('.design')!;
+    const frameColors = [0xff7a1c, 0xd62e2e, 0x2f6fd6, 0x2bb673, 0xf2c230, 0x8a4fd8, 0xf4f4f1, 0x1d1f22];
+    const forkColors = [0xd8a63a, 0x1d1f22, 0xb9c0c8, 0xff7a1c, 0xd62e2e, 0x2f6fd6];
+    const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
+    const swatches = (key: string, colors: number[]) =>
+      `<div class="swatches">${colors.map((c) => `<button type="button" class="colour" data-key="${key}" data-value="${c}" style="--c: ${hex(c)}" aria-label="${hex(c)}"></button>`).join('')}</div>`;
+    const slider = (key: keyof typeof DESIGN_RANGES, label: string, unit: (v: number) => string) => {
+      const r = DESIGN_RANGES[key];
+      return `<label class="slider">${label} <span class="val" data-val="${key}"></span>
+        <input type="range" data-key="${key}" min="${r.min}" max="${r.max}" step="${r.step}" data-unit="${unit === mm ? 'mm' : 'deg'}"></label>`;
+    };
+    const mm = (v: number) => `${Math.round(v * 1000)} mm`;
+    const deg = (v: number) => `${v.toFixed(1)}°`;
+    const choice = (key: string, options: [string, string][]) =>
+      `<div class="choice-row">${options.map(([v, l]) => `<button type="button" class="opt" data-key="${key}" data-value="${v}">${l}</button>`).join('')}</div>`;
+    box.innerHTML = `
+      <div class="field"><div class="field-name">Frame colour</div>${swatches('frameColor', frameColors)}</div>
+      <div class="field"><div class="field-name">Fork colour</div>${swatches('forkColor', forkColors)}</div>
+      ${slider('headAngle', 'Head angle', deg)}
+      ${slider('reach', 'Reach', mm)}
+      ${slider('stack', 'Stack', mm)}
+      ${slider('chainstay', 'Chainstay', mm)}
+      <div class="field"><div class="field-name">Wheels</div>${choice('wheel', [['27.5', '27.5"'], ['29', '29"']])}</div>
+      <div class="field"><div class="field-name">Tubes</div>${choice('tubes', [['slim', 'Slim'], ['normal', 'Normal'], ['burly', 'Burly']])}</div>
+      <div class="field"><div class="field-name">Top tube</div>${choice('topTube', [['straight', 'Straight'], ['dropped', 'Dropped']])}</div>
+      <button type="button" class="opt reset" data-reset="1">Reset to stock</button>`;
+    const set = (key: string, value: string | number) => {
+      const d = progress.bikeDesign() as unknown as Record<string, unknown>;
+      d[key] = typeof value === 'string' && key !== 'tubes' && key !== 'topTube' ? Number(value) : value;
+      progress.setBikeDesign(d as unknown as ReturnType<typeof progress.bikeDesign>);
+    };
+    box.addEventListener('click', (e) => {
+      const b = (e.target as HTMLElement).closest('button');
+      if (!b) return;
+      if (b.dataset.reset) progress.setBikeDesign({ ...DEFAULT_DESIGN });
+      else if (b.dataset.key) set(b.dataset.key, b.dataset.value!);
+    });
+    box.addEventListener('input', (e) => {
+      const input = e.target as HTMLInputElement;
+      if (input.dataset.key) set(input.dataset.key, Number(input.value));
+    });
+    this.showDesign = () => {
+      const d = progress.bikeDesign() as unknown as Record<string, number | string>;
+      for (const b of box.querySelectorAll<HTMLButtonElement>('[data-key]')) {
+        if (b.tagName !== 'BUTTON') continue;
+        b.classList.toggle('on', String(d[b.dataset.key!]) === b.dataset.value);
+      }
+      for (const input of box.querySelectorAll<HTMLInputElement>('input[type=range]')) {
+        input.value = String(d[input.dataset.key!]);
+        const v = Number(d[input.dataset.key!]);
+        box.querySelector(`[data-val="${input.dataset.key}"]`)!.textContent = input.dataset.unit === 'mm' ? mm(v) : deg(v);
+      }
+    };
+    this.showDesign();
+  }
+  private showDesign: () => void = () => {};
 
   /** Your maps in the builder: ride, edit or delete each. */
   private renderMyMaps(): void {

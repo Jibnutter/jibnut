@@ -13,7 +13,7 @@ import type { SecondaryMotion } from './secondary';
 import { createHeadgear } from './helmet';
 import { createBootCuff } from './gear';
 import { BOARD_STANCE } from './boardModel';
-import { PEDAL_X, GRIPS } from './bikeModel';
+import { PEDAL_X, GRIPS, gripsFor, DEFAULT_DESIGN, type BikeDesign } from './bikeModel';
 
 /**
  * Placeholder human: a three-part spine (pelvis, abdomen, chest), a sphere
@@ -193,6 +193,8 @@ export const GRAB = {
 /** A shifty at full strength: skis turned this far (rad, + = tips left), shoulders back the other way. */
 // (45° to the left, tips dipped a little)
 export const SHIFTY = { skis: Math.PI / 4, shoulders: 0.55, tipDown: 0.2 };
+/** On the bike, the head tips back up to this far (rad) to look ahead. */
+const BIKE_LOOK_UP = 1.3;
 /** On a board, the grab pulls both feet up this far. */
 const BOARD_GRAB_LIFT = 0.26;
 /** The ski's origin (its base, under the boot) sits this far below the ankle. */
@@ -328,6 +330,14 @@ export class Person {
    * no-hander: both hands off the bars, out wide.
    */
   bike = false;
+  /** Where the hands hold the bars, in the bike's (half 0's) frame: from its design. */
+  readonly bikeGrips = GRIPS.map((g) => g.clone());
+  /** The bike's frame design (the workshop). */
+  bikeDesign: BikeDesign = DEFAULT_DESIGN;
+  setBikeDesign(d: BikeDesign): void {
+    this.bikeDesign = d;
+    gripsFor(d).forEach((g, i) => this.bikeGrips[i].copy(g));
+  }
   setBike(on: boolean): void {
     this.bike = on;
     this.pose(RIDING);
@@ -502,7 +512,9 @@ export class Person {
       .setFromUnitVectors(UP, unturned)
       .premultiply(yawQ)
       .premultiply(tmpHeadTurn.setFromAxisAngle(spine, p.twist + p.look * HEAD_TURN))
-      .multiply(tmpHeadTurn.setFromAxisAngle(tmpX.set(1, 0, 0), -nod));
+      // (On the bike, bent low over the bars, the head tips back to look
+      // ahead down the trail rather than at the front wheel)
+      .multiply(tmpHeadTurn.setFromAxisAngle(tmpX.set(1, 0, 0), -nod + (this.bike ? Math.min(BIKE_LOOK_UP, torsoPitch * 1.2) : 0)));
 
     for (let i = 0; i < 2; i++) {
       const s = i === 0 ? -1 : 1; // left, right
@@ -566,7 +578,7 @@ export class Person {
       if (this.bike) {
         // On the grips (they turn and lean with the bike, i.e. half 0); a
         // no-hander (the grab) takes both hands off, out wide and up
-        const grip = tmpHold.copy(GRIPS[i]).applyQuaternion(this.skiPoses[0].q).add(this.skiPoses[0].p);
+        const grip = tmpHold.copy(this.bikeGrips[i]).applyQuaternion(this.skiPoses[0].q).add(this.skiPoses[0].p);
         hand.copy(grip);
         if (p.grab > 0) {
           const out = tmpOut.copy(j.shoulders[i]).addScaledVector(shoulderSide, s * 0.45).addScaledVector(spine, 0.15);

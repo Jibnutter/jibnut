@@ -27,6 +27,7 @@ import { Powder } from './powder';
 import { Kickers } from './kickers';
 import { BuildMode } from './buildMode';
 import { Editor } from './editor';
+import { buildBike, animateBike, BB_HEIGHT } from './bikeModel';
 import { StartScreen } from './startScreen';
 import * as progress from './progress';
 import { Physics } from './physics';
@@ -193,7 +194,31 @@ if (editor) {
 const startScreen = new StartScreen();
 // Wear what was bought in the store, and change when it changes
 let dressedIn = '';
+// The bike workshop shows your bike on its own, turning slowly
+let inWorkshop = false;
+let bikePreview: THREE.Group | null = null;
+const PREVIEW_Z = START_Z - 4;
+function showBikePreview(): void {
+  bikePreview?.removeFromParent();
+  const bike = buildBike(progress.bikeDesign());
+  bike.name = 'bike';
+  bikePreview = new THREE.Group();
+  bikePreview.add(bike);
+  animateBike(bikePreview, 0, 0, 0, 0); // (sets the shock between its mounts)
+  const x = courseX(PREVIEW_Z);
+  bikePreview.position.set(x, heightAt(x, PREVIEW_Z) + BB_HEIGHT, PREVIEW_Z);
+  scene.add(bikePreview);
+}
+let designedAs = '';
 function dress(): void {
+  // The bike's frame design (the workshop): rebuild the bike when it changes
+  const design = progress.bikeDesign();
+  const dkey = JSON.stringify(design);
+  if (dkey !== designedAs) {
+    designedAs = dkey;
+    skier.setBikeDesign(design);
+    if (inWorkshop) showBikePreview();
+  }
   const o = progress.outfit();
   const key = `${o.bottom.id}/${o.top.id}/${o.gear.id}`;
   if (key === dressedIn) return; // (Nuts changed, not the clothes)
@@ -222,6 +247,11 @@ let lockerTime = 0;
 startScreen.onPage = (page) => {
   inLocker = page === 'locker';
   skier.view.visible = inLocker;
+  inWorkshop = page === 'workshop';
+  if (inWorkshop) {
+    showBikePreview();
+    lockerTime = 0;
+  } else bikePreview?.removeFromParent();
   if (inLocker) {
     skier.reset(courseX(DECK_END_Z + 6), DECK_END_Z + 6);
     lockerTime = 0;
@@ -339,6 +369,14 @@ renderer.setAnimationLoop((time) => {
     stoppedFor = finished && skier.grounded && skier.speed < 0.5 ? stoppedFor + dt : 0;
     if (stoppedFor > 1.5 || skier.object.position.z < END_Z - 30) restart();
     chase.update(dt);
+  } else if (inWorkshop && bikePreview) {
+    // Workshop: the bike side on, turning slowly back and forth, on the right
+    lockerTime += dt;
+    bikePreview.rotation.y = Math.PI / 2 + 0.6 * Math.sin(lockerTime * 0.35);
+    const c = bikePreview.position;
+    const wide = window.innerWidth >= 640;
+    camera.position.set(c.x + (wide ? -0.9 : 0), c.y + 0.75, c.z + (wide ? 2.6 : 3.3));
+    camera.lookAt(c.x + (wide ? -0.9 : 0), c.y + 0.2, c.z);
   } else if (inLocker) {
     // Locker: the rider standing still (clothes still moving), the camera
     // in front of them swaying slowly side to side, with the rider on the

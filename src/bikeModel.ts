@@ -27,37 +27,112 @@ import { createBootShell } from './gear';
 
 export const PEDAL_X = 0.11; // each pedal this far out from the centreline
 export const BB_HEIGHT = 0.34; // bottom bracket (pedal axle) above the ground
-const WHEEL_R = 0.37; // 29er
 const TIRE = 0.034;
-const FRONT_AXLE = new THREE.Vector3(0, WHEEL_R - BB_HEIGHT, -0.74);
-const REAR_AXLE = new THREE.Vector3(0, WHEEL_R - BB_HEIGHT, 0.44);
-const HEAD_TOP = new THREE.Vector3(0, 0.6, -0.5);
-const HEAD_BOTTOM = new THREE.Vector3(0, 0.44, -0.56);
-const SEAT_TOP = new THREE.Vector3(0, 0.56, 0.13);
-const PIVOT = new THREE.Vector3(0, 0.1, 0.06); // swingarm pivot, just above and behind the BB
-const SHOCK_FRAME = new THREE.Vector3(0, 0.36, -0.14); // shock mount on the frame
-/** Where the hands hold the bars (in half 0's frame): left and right grips. */
-export const GRIPS = [new THREE.Vector3(PEDAL_X - 0.37, 0.72, -0.48), new THREE.Vector3(PEDAL_X + 0.37, 0.72, -0.48)];
 /** Bike mass (kg), split over the two halves for the physics. */
 export const BIKE_MASS = 14;
-/** The ragdoll's collision box for the bike (half 0's frame): centre and half-sizes. */
-export const BIKE_BOX = { centre: new THREE.Vector3(PEDAL_X, (WHEEL_R - BB_HEIGHT) / 2 + 0.06, -0.15), half: new THREE.Vector3(0.05, 0.33, 0.58) };
-
-const FORK_AXIS = HEAD_BOTTOM.clone().sub(FRONT_AXLE).normalize(); // up the fork
 const FORK_TRAVEL = 0.12;
 const REAR_TRAVEL_ANGLE = 0.22; // rad of swingarm at full squash
 
-let mats: Record<'frame' | 'black' | 'tire' | 'gold' | 'metal' | 'rim', THREE.Material> | null = null;
-function materials() {
-  mats ??= {
-    frame: new THREE.MeshStandardMaterial({ color: 0xff7a1c, roughness: 0.35, metalness: 0.2 }),
-    black: new THREE.MeshStandardMaterial({ color: 0x17181b, roughness: 0.55, metalness: 0.2 }),
-    tire: new THREE.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.95 }),
-    gold: new THREE.MeshStandardMaterial({ color: 0xd8a63a, roughness: 0.25, metalness: 0.8 }),
-    metal: new THREE.MeshStandardMaterial({ color: 0xb9c0c8, roughness: 0.3, metalness: 0.9 }),
-    rim: new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.4, metalness: 0.6 }),
+/**
+ * A frame design (from the bike workshop). Lengths in metres from the
+ * bottom bracket; the ranges in DESIGN_RANGES keep it rideable.
+ */
+export interface BikeDesign {
+  frameColor: number;
+  forkColor: number;
+  headAngle: number; // degrees from level: slacker (lower) is longer and more stable-looking
+  reach: number; // how far forward the head tube's top is
+  stack: number; // how high the head tube's top is
+  chainstay: number; // back wheel's axle behind the BB
+  wheel: 27.5 | 29; // wheel size (inches)
+  tubes: 'slim' | 'normal' | 'burly';
+  topTube: 'straight' | 'dropped';
+}
+
+export const DEFAULT_DESIGN: BikeDesign = {
+  frameColor: 0xff7a1c,
+  forkColor: 0xd8a63a,
+  headAngle: 64,
+  reach: 0.5,
+  stack: 0.6,
+  chainstay: 0.44,
+  wheel: 29,
+  tubes: 'normal',
+  topTube: 'straight',
+};
+
+export const DESIGN_RANGES = {
+  headAngle: { min: 60, max: 69, step: 0.5 },
+  reach: { min: 0.42, max: 0.54, step: 0.01 },
+  stack: { min: 0.54, max: 0.66, step: 0.01 },
+  chainstay: { min: 0.41, max: 0.48, step: 0.005 },
+};
+
+/** The design's key points, in the bike's own frame (BB at the origin, forward -z). */
+function geometry(d: BikeDesign) {
+  const wheelR = d.wheel === 29 ? 0.37 : 0.35;
+  const axleY = wheelR - BB_HEIGHT;
+  const a = THREE.MathUtils.degToRad(d.headAngle);
+  const steer = new THREE.Vector3(0, Math.sin(a), Math.cos(a)); // up the head tube (leaning back)
+  const headTop = new THREE.Vector3(0, d.stack, -d.reach);
+  const headBottom = headTop.clone().addScaledVector(steer, -0.17);
+  // The fork runs on down the steering axis to the front axle (plus a little offset forward)
+  const t = (headBottom.y - axleY) / steer.y;
+  const frontAxle = headBottom.clone().addScaledVector(steer, -t).add(new THREE.Vector3(0, 0, -0.044));
+  frontAxle.y = axleY;
+  const rearAxle = new THREE.Vector3(0, axleY, d.chainstay);
+  const seatTop = new THREE.Vector3(0, 0.56, 0.13);
+  const tube = { slim: 0.8, normal: 1, burly: 1.3 }[d.tubes];
+  const barCentre = headTop.clone().add(new THREE.Vector3(0, 0.09, 0.02));
+  return {
+    wheelR,
+    headTop,
+    headBottom,
+    frontAxle,
+    rearAxle,
+    seatTop,
+    pivot: new THREE.Vector3(0, 0.1, 0.06), // swingarm pivot, just above and behind the BB
+    shockFrame: new THREE.Vector3(0, 0.36 * (d.stack / 0.6), -0.14),
+    forkAxis: headBottom.clone().sub(frontAxle).normalize(), // up the fork
+    steer,
+    tube,
+    barCentre,
   };
-  return mats;
+}
+
+/** Where the hands hold the bars (in half 0's frame): left and right grips. */
+export function gripsFor(d: BikeDesign): THREE.Vector3[] {
+  const c = geometry(d).barCentre;
+  return [-1, 1].map((s) => new THREE.Vector3(PEDAL_X + s * 0.37, c.y + 0.02, c.z));
+}
+/** The default design's grips (the rider's pose is fitted to these). */
+export const GRIPS = gripsFor(DEFAULT_DESIGN);
+
+/** The ragdoll's collision box for the bike (half 0's frame): centre and half-sizes. */
+export function bikeBox(d: BikeDesign): { centre: THREE.Vector3; half: THREE.Vector3 } {
+  const g = geometry(d);
+  const front = g.frontAxle.z - g.wheelR * 0.6;
+  const back = g.rearAxle.z + g.wheelR * 0.6;
+  const bottom = -BB_HEIGHT;
+  const top = g.wheelR - BB_HEIGHT + 0.3;
+  return {
+    centre: new THREE.Vector3(PEDAL_X, (top + bottom) / 2, (front + back) / 2),
+    half: new THREE.Vector3(0.05, (top - bottom) / 2, (back - front) / 2),
+  };
+}
+
+const sharedMats: Record<'black' | 'tire' | 'metal' | 'rim', THREE.Material> = {
+  black: new THREE.MeshStandardMaterial({ color: 0x17181b, roughness: 0.55, metalness: 0.2 }),
+  tire: new THREE.MeshStandardMaterial({ color: 0x1b1b1b, roughness: 0.95 }),
+  metal: new THREE.MeshStandardMaterial({ color: 0xb9c0c8, roughness: 0.3, metalness: 0.9 }),
+  rim: new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.4, metalness: 0.6 }),
+};
+function materials(d: BikeDesign = DEFAULT_DESIGN) {
+  return {
+    ...sharedMats,
+    frame: new THREE.MeshStandardMaterial({ color: d.frameColor, roughness: 0.35, metalness: 0.2 }),
+    gold: new THREE.MeshStandardMaterial({ color: d.forkColor, roughness: 0.25, metalness: 0.8 }),
+  };
 }
 
 /** A tube between two points. */
@@ -71,8 +146,8 @@ function tube(a: THREE.Vector3, b: THREE.Vector3, r: number, mat: THREE.Material
 }
 
 /** A wheel (in the yz plane, spinning about x): knobbly tyre, rim, hub, spokes, brake rotor. */
-function wheel(): THREE.Group {
-  const m = materials();
+function wheel(WHEEL_R: number): THREE.Group {
+  const m = sharedMats;
   const g = new THREE.Group();
   const tire = new THREE.Mesh(new THREE.TorusGeometry(WHEEL_R - TIRE, TIRE, 10, 48), m.tire);
   tire.rotation.y = Math.PI / 2;
@@ -110,15 +185,30 @@ function wheel(): THREE.Group {
 }
 
 /** The whole bike, centred on its own centreline (BB at the origin). */
-function bike(): THREE.Group {
-  const m = materials();
+export function buildBike(d: BikeDesign = DEFAULT_DESIGN): THREE.Group {
+  const m = materials(d);
+  const G = geometry(d);
+  const { headTop: HEAD_TOP, headBottom: HEAD_BOTTOM, seatTop: SEAT_TOP, pivot: PIVOT, shockFrame: SHOCK_FRAME } = G;
+  const REAR_AXLE = G.rearAxle;
+  const FRONT_AXLE = G.frontAxle;
+  const FORK_AXIS = G.forkAxis;
+  const k = G.tube; // tube thickness
   const bike = new THREE.Group();
+  bike.userData.forkAxis = FORK_AXIS;
 
   // Front triangle (frame)
-  bike.add(tube(new THREE.Vector3(0, 0, 0), HEAD_BOTTOM, 0.03, m.frame, 0.026)); // down tube
-  bike.add(tube(SEAT_TOP, HEAD_TOP, 0.022, m.frame)); // top tube
-  bike.add(tube(new THREE.Vector3(0, 0.02, 0.02), SEAT_TOP, 0.022, m.frame)); // seat tube
-  bike.add(tube(HEAD_BOTTOM, HEAD_TOP, 0.032, m.frame)); // head tube
+  bike.add(tube(new THREE.Vector3(0, 0, 0), HEAD_BOTTOM, 0.03 * k, m.frame, 0.026 * k)); // down tube
+  if (d.topTube === 'dropped') {
+    // A low, swooping top tube: down from the head tube to the seat tube's
+    // middle, with a strut up to the seat cluster
+    const mid = SEAT_TOP.clone().multiplyScalar(0.62);
+    bike.add(tube(mid, HEAD_TOP.clone().lerp(HEAD_BOTTOM, 0.3), 0.022 * k, m.frame));
+    bike.add(tube(mid.clone().lerp(SEAT_TOP, 0.1), SEAT_TOP.clone().lerp(HEAD_TOP, 0.18), 0.015 * k, m.frame));
+  } else {
+    bike.add(tube(SEAT_TOP, HEAD_TOP, 0.022 * k, m.frame)); // top tube
+  }
+  bike.add(tube(new THREE.Vector3(0, 0.02, 0.02), SEAT_TOP, 0.022 * k, m.frame)); // seat tube
+  bike.add(tube(HEAD_BOTTOM, HEAD_TOP, 0.032 * k, m.frame)); // head tube
   // Seat post (dropper, lowered) and saddle
   const postTop = SEAT_TOP.clone().add(new THREE.Vector3(0, 0.1, 0.03));
   bike.add(tube(SEAT_TOP, postTop, 0.016, m.black));
@@ -138,13 +228,13 @@ function bike(): THREE.Group {
   const axle = REAR_AXLE.clone().sub(PIVOT);
   for (const side of [-1, 1]) {
     const off = new THREE.Vector3(side * 0.06, 0, 0);
-    swing.add(tube(off.clone(), axle.clone().add(off), 0.016, m.frame)); // chainstay
+    swing.add(tube(off.clone(), axle.clone().add(off), 0.016 * k, m.frame)); // chainstay
     const stayTop = new THREE.Vector3(side * 0.05, 0.3, 0.06);
-    swing.add(tube(stayTop, axle.clone().add(off), 0.013, m.frame)); // seatstay
+    swing.add(tube(stayTop, axle.clone().add(off), 0.013 * k, m.frame)); // seatstay
   }
   const rocker = new THREE.Vector3(0, 0.3, 0.06);
   swing.add(tube(new THREE.Vector3(-0.05, 0.3, 0.06), new THREE.Vector3(0.05, 0.3, 0.06), 0.012, m.frame));
-  const rear = wheel();
+  const rear = wheel(G.wheelR);
   rear.name = 'rearWheel';
   rear.position.copy(axle);
   swing.add(rear);
@@ -165,8 +255,7 @@ function bike(): THREE.Group {
   const front = new THREE.Group();
   front.name = 'front';
   front.position.copy(HEAD_BOTTOM);
-  const steerAxis = HEAD_TOP.clone().sub(HEAD_BOTTOM).normalize();
-  front.userData.axis = steerAxis;
+  front.userData.axis = G.steer.clone();
   const crown = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.035, 0.05), m.black);
   crown.position.y = -0.03;
   front.add(crown);
@@ -182,7 +271,7 @@ function bike(): THREE.Group {
     const a = axleF.clone().add(new THREE.Vector3(side * 0.065, 0, 0));
     lowers.add(tube(a, a.clone().addScaledVector(FORK_AXIS, 0.3), 0.022, m.black));
   }
-  const frontWheel = wheel();
+  const frontWheel = wheel(G.wheelR);
   frontWheel.name = 'frontWheel';
   frontWheel.position.copy(axleF);
   lowers.add(frontWheel);
@@ -223,7 +312,7 @@ function bike(): THREE.Group {
 
 /** Flat pedal under a boot (at the half's origin), with the boot on it. */
 function pedal(): THREE.Group {
-  const m = materials();
+  const m = sharedMats;
   const g = new THREE.Group();
   const p = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.018, 0.1), m.black);
   p.position.y = -0.02;
@@ -238,11 +327,11 @@ function pedal(): THREE.Group {
 }
 
 /** One half: 0 = the whole bike (under the left pedal), 1 = the right pedal. */
-export function createBikeHalf(i: number): THREE.Group {
+export function createBikeHalf(i: number, design: BikeDesign = DEFAULT_DESIGN): THREE.Group {
   const half = new THREE.Group();
   half.add(pedal());
   if (i === 0) {
-    const b = bike();
+    const b = buildBike(design);
     b.name = 'bike';
     b.position.x = PEDAL_X; // the centreline, right of the left pedal
     half.add(b);
@@ -265,7 +354,7 @@ export function animateBike(half: THREE.Object3D, roll: number, steer: number, s
   const front = bike.getObjectByName('front')!;
   front.quaternion.setFromAxisAngle(front.userData.axis as THREE.Vector3, steer);
   const lowers = bike.getObjectByName('lowers')!;
-  lowers.position.copy(FORK_AXIS).multiplyScalar(squash * FORK_TRAVEL);
+  lowers.position.copy(bike.userData.forkAxis as THREE.Vector3).multiplyScalar(squash * FORK_TRAVEL);
   bike.getObjectByName('frontWheel')!.rotation.x = -roll;
   const swing = bike.getObjectByName('swing')!;
   swing.rotation.x = -squash * REAR_TRAVEL_ANGLE; // the axle comes up

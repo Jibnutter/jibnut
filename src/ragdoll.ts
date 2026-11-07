@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { RAPIER, type Physics } from './physics';
 import { BODY, MASS, type Person, type Segment } from './person';
 import { BOARD_LENGTH, BOARD_STANCE } from './boardModel';
-import { BIKE_BOX, BIKE_MASS } from './bikeModel';
+import { bikeBox, BIKE_MASS } from './bikeModel';
 
 /**
  * The always-on ragdoll: the rider you see is this, all the time.
@@ -134,13 +134,15 @@ const SKI_TWIST_SLACK = 0.6; // rad
  * through a flip). Position only: the hand can still turn on it.
  */
 const GRAB_SPRING = { k: 1500, d: 50 }; // N/m, N·s/m
+/** Hands on the handlebar (the bike): firm, so they stay on through landings. */
+const BAR_SPRING = { k: 2500, d: 80 }; // N/m, N·s/m
 
 // Ball joint limits, radians either way from the pose the ragdoll was built
 // in (standing, riding), about the skier's own axes: x = bend forward/back,
 // y = twist, z = bend sideways. Generous enough for every riding pose.
 type Limits = { x: number; y: number; z: number };
 const SPINE_LIMITS: Limits = { x: 0.6, y: 0.5, z: 0.4 }; // per spine joint
-const NECK_LIMITS: Limits = { x: 0.8, y: 2.3, z: 0.6 }; // turns far for looking back
+const NECK_LIMITS: Limits = { x: 1.3, y: 2.3, z: 0.6 }; // turns far for looking back; tips back far (looking ahead, bent over a bike's bars)
 const SHOULDER_LIMITS: Limits = { x: 2.4, y: 1.4, z: 1.8 };
 const HIP_LIMITS: Limits = { x: 1.9, y: 0.9, z: 0.8 };
 const KNEE_MAX = 2.6; // radians of bend from straight
@@ -201,6 +203,8 @@ export class Ragdoll {
   /** On the mountain bike: the two "skis" are the bike (under the left pedal) and the right pedal. */
   private readonly bike: boolean;
   private readonly grabHand: Part;
+  private readonly grabHands: Part[];
+  private readonly barSprings: RAPIER.ImpulseJoint[] = [];
   private readonly skiJoints: (RAPIER.ImpulseJoint | null)[] = [null, null];
   private readonly lastSkiVel = [new THREE.Vector3(), new THREE.Vector3()];
   // Ski targets: last frame's and this frame's, interpolated across substeps
@@ -317,7 +321,7 @@ export class Ragdoll {
         // The bike: half 0 a box round its wheels and frame, down to the
         // snow; half 1 just the right pedal
         if (i === 0) {
-          const { centre, half } = BIKE_BOX;
+          const { centre, half } = bikeBox(person.bikeDesign);
           addCollider(part, RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z), BIKE_MASS - 1, 8 * half.x * half.y * half.z, RIDING_SKI_FRICTION, undefined, centre);
         } else {
           addCollider(part, RAPIER.ColliderDesc.cuboid(0.05, 0.012, 0.05), 1, 0.1 * 0.024 * 0.1, RIDING_SKI_FRICTION);
@@ -442,6 +446,7 @@ export class Ragdoll {
     }
 
     this.grabHand = forearms[1];
+    this.grabHands = [forearms[0], forearms[1]];
     // Core anchor for the air: free joint to the abdomen, springs off for now
     this.corePart = abdomen;
     this.readTarget(abdomen, this.coreTo);
@@ -511,10 +516,20 @@ export class Ragdoll {
         raw.jointConfigureMotorPosition(this.coreSpring.handle, ax, 0, k * blend, d * blend);
       }
     }
+    // On the bike: both hands held on the grips (the arms alone let them
+    // float 15 cm off, and fly off on landings), let go for a no-hander
+    if (this.bike) {
+      const on = THREE.MathUtils.clamp(1 - this.grab / 0.3, 0, 1);
+      if (on > 0 && !this.barSprings.length) this.createBarSprings();
+      if (on === 0 && this.barSprings.length) this.dropBars();
+      for (const spring of this.barSprings) {
+        for (let ax = 0; ax < 3; ax++) raw.jointConfigureMotorPosition(spring.handle, ax, 0, BAR_SPRING.k * on, BAR_SPRING.d * on);
+      }
+    }
     // The grab spring: only while the hand is (nearly) there (earlier it
     // would yank the arm), and only exists then: even slack, a joint between
     // the hand and the ski changed how the body landed
-    const hold = THREE.MathUtils.clamp((this.grab - 0.7) / 0.3, 0, 1);
+    const hold = this.bike ? 0 : THREE.MathUtils.clamp((this.grab - 0.7) / 0.3, 0, 1);
     if (hold > 0 && !this.grabSpring) this.createGrabSpring();
     if (hold === 0 && this.grabSpring) this.dropGrab();
     if (this.grabSpring) {
@@ -583,6 +598,28 @@ export class Ragdoll {
     for (let ax = 0; ax < 3; ax++) {
       raw.jointConfigureMotorModel(this.grabSpring.handle, ax, RAPIER.MotorModel.ForceBased as number as never);
     }
+  }
+
+  /** Springs holding each hand (the end of its forearm) on its grip, on the bike (half 0). */
+  private createBarSprings(): void {
+    const raw = this.physics.world.impulseJoints.raw;
+    this.grabHands.forEach((forearm, i) => {
+      const hand = new THREE.Vector3(0, BODY.forearm / 2, 0).applyQuaternion(forearm.colliderRot);
+      const grip = this.person.bikeGrips[i].clone().applyQuaternion(this.skis[0].colliderRot);
+      const spring = this.physics.world.createImpulseJoint(
+        RAPIER.JointData.generic(hand, grip, X_AXIS, 0 as RAPIER.JointAxesMask),
+        forearm.body,
+        this.skis[0].body,
+        true,
+      );
+      for (let ax = 0; ax < 3; ax++) raw.jointConfigureMotorModel(spring.handle, ax, RAPIER.MotorModel.ForceBased as number as never);
+      this.barSprings.push(spring);
+    });
+  }
+
+  private dropBars(): void {
+    for (const spring of this.barSprings) this.physics.world.removeImpulseJoint(spring, true);
+    this.barSprings.length = 0;
   }
 
   private dropGrab(): void {
@@ -684,6 +721,7 @@ export class Ragdoll {
     this.skiSprings.length = 0;
     this.dropCore();
     this.dropGrab(); // (and let go of the grab)
+    this.dropBars(); // (and of the handlebar)
     if (this.bike) {
       // Coming off the bike: the feet leave the pedals, the bike goes its own way
       for (let i = 0; i < 2; i++) {
