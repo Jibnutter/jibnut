@@ -700,6 +700,63 @@ function dyeLine(z: number, x0: number, x1: number, width: number, material: THR
 }
 
 /** The terrain as you see it: covered in powder (lifted to powderAt). */
+// ---------------------------------------------------------------------------
+// Baked ambient occlusion: how much of the sky each point of the terrain can
+// see. Computed once at load from the height function (the terrain never
+// changes), so it's free while playing: a lightmap without a lightmap.
+
+const AO_CELL = 2; // m: worked out on this grid, blended in between
+const AO_DIRECTIONS = 8;
+const AO_STEPS = [1, 2, 3.5, 5.5, 8, 12, 17, 25, 36]; // m out from the point
+const AO_STRENGTH = 0.75; // how dark fully hemmed-in snow gets (1 = black)
+const aoCache = new Map<number, number>();
+
+/**
+ * Sky visibility at a grid point (1 = open sky, lower = hemmed in). In each
+ * direction, the steepest rise of the terrain above the point's own slope
+ * (so an even slope isn't darkened: only walls, lips and hollows are).
+ */
+function aoAt(ix: number, iz: number): number {
+  const key = ix * 100003 + iz;
+  const cached = aoCache.get(key);
+  if (cached !== undefined) return cached;
+  const x = ix * AO_CELL;
+  const z = iz * AO_CELL;
+  const h0 = heightAt(x, z);
+  const e = 0.75;
+  const gx = (heightAt(x + e, z) - heightAt(x - e, z)) / (2 * e);
+  const gz = (heightAt(x, z + e) - heightAt(x, z - e)) / (2 * e);
+  let occluded = 0;
+  for (let d = 0; d < AO_DIRECTIONS; d++) {
+    const a = (d / AO_DIRECTIONS) * Math.PI * 2;
+    const dx = Math.cos(a);
+    const dz = Math.sin(a);
+    const own = gx * dx + gz * dz; // the slope's own rise this way
+    let maxRise = 0;
+    for (const r of AO_STEPS) {
+      const rise = (heightAt(x + dx * r, z + dz * r) - h0) / r - own;
+      if (rise > maxRise) maxRise = rise;
+    }
+    occluded += Math.sin(Math.atan(maxRise)); // how much of this side's sky is hidden
+  }
+  const visibility = 1 - AO_STRENGTH * (occluded / AO_DIRECTIONS);
+  aoCache.set(key, visibility);
+  return visibility;
+}
+
+/** Sky visibility at (x, z), blended from the grid around it. */
+function skyVisibility(x: number, z: number): number {
+  const fx = x / AO_CELL;
+  const fz = z / AO_CELL;
+  const ix = Math.floor(fx);
+  const iz = Math.floor(fz);
+  const tx = fx - ix;
+  const tz = fz - iz;
+  const a = aoAt(ix, iz) * (1 - tx) + aoAt(ix + 1, iz) * tx;
+  const b = aoAt(ix, iz + 1) * (1 - tx) + aoAt(ix + 1, iz + 1) * tx;
+  return a * (1 - tz) + b * tz;
+}
+
 function powderGeometry(geo: THREE.BufferGeometry): THREE.BufferGeometry {
   const out = geo.clone();
   const pos = out.attributes.position as THREE.BufferAttribute;
@@ -720,7 +777,10 @@ function powderGeometry(geo: THREE.BufferGeometry): THREE.BufferGeometry {
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const bare = THREE.MathUtils.smoothstep(1 - nrm.getY(i), 0.42, 0.62); // ~55° to ~68°
-    c.lerpColors(snow, rock, bare).toArray(color, i * 3);
+    c.lerpColors(snow, rock, bare);
+    // Baked sky visibility: hollows and the feet of walls see less sky
+    c.multiplyScalar(skyVisibility(pos.getX(i), pos.getZ(i)));
+    c.toArray(color, i * 3);
   }
   out.setAttribute('color', new THREE.BufferAttribute(color, 3));
   return out;
