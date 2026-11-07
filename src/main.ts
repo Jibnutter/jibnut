@@ -133,6 +133,8 @@ skier.onLand = (message, clean, points) => {
     trickEl.append(pts);
   }
   trickEl.className = clean ? 'show' : message.startsWith('Sketchy') ? 'show sketchy' : 'show crash';
+  // Each one a little crooked, like it was scribbled on
+  trickEl.style.setProperty('--tilt', `${(-7 + Math.random() * 6).toFixed(1)}deg`);
   clearTimeout(trickTimer);
   trickTimer = window.setTimeout(() => (trickEl.className = ''), 1500);
 };

@@ -46,44 +46,46 @@ canvas {
   font-weight: 500;
   opacity: 0.7;
 }
+/* Trick callouts: white, hand-drawn marker lettering, in the bottom right
+   corner, each popping in a little crooked. A dark marker-ish outline keeps
+   it readable against bright snow. */
+@font-face {
+  font-family: 'Permanent Marker';
+  src: url('./fonts/permanent-marker.woff2') format('woff2');
+  font-display: swap;
+}
 #trick {
   position: fixed;
-  top: 30%;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font: 800 48px/1.1 system-ui, sans-serif;
-  color: #e0672f;
-  text-shadow: 0 2px 0 #fff, 0 4px 12px rgba(0, 0, 0, 0.25);
+  right: 4vw;
+  bottom: 6vh;
+  max-width: min(88vw, 640px);
+  text-align: right;
+  font: 400 clamp(26px, 5vw, 52px) / 1.05 'Permanent Marker', 'Comic Sans MS', cursive;
+  color: #fff;
+  -webkit-text-stroke: 1.5px rgba(20, 26, 36, 0.85);
+  paint-order: stroke fill;
+  text-shadow:
+    2px 3px 0 rgba(20, 26, 36, 0.55),
+    0 6px 18px rgba(0, 0, 0, 0.3);
   opacity: 0;
-  transform: scale(0.8);
-  transition: opacity 0.2s, transform 0.2s;
+  transform: rotate(var(--tilt, -4deg)) scale(0.7) translateY(20px);
+  transform-origin: 100% 100%;
+  transition:
+    opacity 0.18s,
+    transform 0.25s cubic-bezier(0.3, 1.6, 0.5, 1);
   pointer-events: none;
 }
 #trick.show {
   opacity: 1;
-  transform: scale(1);
-}
-#trick.crash {
-  color: #c0392b;
-}
-/* A crash ridden away (crashes off): half points */
-#trick.sketchy {
-  color: #d4a017;
+  transform: rotate(var(--tilt, -4deg)) scale(1) translateY(0);
 }
 #trick.finish {
-  color: #c0392b;
-  font-size: 64px;
+  font-size: clamp(40px, 7vw, 72px);
 }
+#trick .points,
 #trick .nuts-earned {
   margin-top: 4px;
-  font-size: 30px;
-  color: #a0642a;
-}
-#trick .points {
-  margin-top: 6px;
-  font-size: 30px;
-  color: #1b2a3a;
+  font-size: 0.6em;
 }
 #hud .score {
   font-size: 26px;
