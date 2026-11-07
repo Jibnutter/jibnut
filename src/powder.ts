@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { heightAt, normalAt, powderAt, POWDER_DEPTH } from './terrain';
+import { heightAt, normalAt, powderAt, powderAmount, POWDER_DEPTH } from './terrain';
 import { railAt } from './rails';
 import type { Skier } from './skier';
 import type { Controls } from './input';
@@ -23,6 +23,7 @@ const STRAIGHT_RATE = 6; // puffs per second per ski per m/s, running straight
 const CARVE_RATE = 30; // ... more per rad/s of turning
 const BRAKE_RATE = 25; // ... and when braking (skis skidding sideways)
 const LAND_BURST = 260; // puffs on landing (scaled by how hard)
+const GROOMED_SPRAY = 0.2; // of the spray on groomed snow
 const DRAG = 2.6; // 1/s: powder hangs in the air
 const GRAVITY = -9.81;
 
@@ -138,7 +139,9 @@ export class Powder {
       const rate = speed * (STRAIGHT_RATE + CARVE_RATE * Math.abs(turn) + (braking ? BRAKE_RATE : 0));
       for (const p of ski) {
         if (!onSnow(p)) continue;
-        let n = rate * dt;
+        // Groomed snow throws up only a little (mostly when carving and braking)
+        const deep = powderAmount(p.x, p.z);
+        let n = rate * dt * (GROOMED_SPRAY + (1 - GROOMED_SPRAY) * deep);
         while (n > 0) {
           if (n < 1 && Math.random() > n) break;
           n -= 1;
@@ -168,7 +171,8 @@ export class Powder {
       if (!this.wasGrounded && onSnow(ski[0])) {
         const hard = Math.min(1.5, 0.3 + this.lastFallSpeed / 10);
         const c = tmpC.addVectors(ski[0], ski[1]).multiplyScalar(0.5);
-        for (let k = 0; k < LAND_BURST * hard; k++) {
+        const deep = powderAmount(c.x, c.z);
+        for (let k = 0; k < LAND_BURST * hard * (0.15 + 0.85 * deep); k++) {
           const a = Math.random() * Math.PI * 2;
           const r = (1 + Math.random() * 3) * hard;
           this.emit(
@@ -189,7 +193,7 @@ export class Powder {
       const c = skier.centre(tmpC);
       const ground = heightAt(c.x, c.z) + POWDER_DEPTH;
       if (c.y - ground < 0.5) {
-        for (let k = 0; k < 60 * dt * Math.max(2, speed); k++) {
+        for (let k = 0; k < 60 * dt * Math.max(2, speed) * (0.2 + 0.8 * powderAmount(c.x, c.z)); k++) {
           this.emit(
             c.x + (Math.random() - 0.5) * 0.8,
             ground,
@@ -250,6 +254,11 @@ export class Powder {
       const p = ski[i];
       if (!onGround || !onSnow(p)) {
         track.last = null; // lifted off: the next point starts a new track
+        return;
+      }
+      // Grooves only in powder (groomed snow keeps no real track)
+      if (powderAmount(p.x, p.z) < 0.3) {
+        track.last = null;
         return;
       }
       if (track.last && track.last.distanceToSquared(p) < TRACK_STEP * TRACK_STEP) return;

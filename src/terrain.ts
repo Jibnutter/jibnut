@@ -70,6 +70,8 @@ interface MapDef extends MapInfo {
   kicker?: Kicker;
   /** A park: lift, start and finish arches, fencing, marker poles. */
   park: boolean;
+  /** Powder only between these tags (down the course); everywhere if not given. */
+  powderOnly?: { from: string; to: string };
   /** How much of the quirky hop after a hard landing (1 = full). */
   bounce: number;
   /** Untracked deep snow holding the skis back (1/s: m/s² per m/s of speed). */
@@ -81,8 +83,8 @@ interface MapDef extends MapInfo {
 const JUMPLINE: MapDef = {
   id: 'jumpline',
   name: 'Jumpline',
-  description: 'A slopestyle line down the mountain: three tabletops, each bigger than the last, in deep powder.',
-  features: ['3 tabletop jumps: 15, 18 and 21 m', 'Down rail beside the first jump', 'Deep powder'],
+  description: 'A groomed slopestyle line down the mountain: three tabletops, each bigger than the last, the biggest landing in deep powder.',
+  features: ['3 tabletop jumps: 15, 18 and 21 m', 'Down rail beside the first jump', 'Powder landing on the last jump'],
   sMin: -80,
   startAngle: -22,
   // The course profile, as a programme of slope angles. Each step eases the
@@ -157,6 +159,8 @@ const JUMPLINE: MapDef = {
   wild: { amount: 0, from: 'deck-end' },
   cliffs: [],
   park: true,
+  // Groomed, except the last jump's landing: a pillow of deep powder
+  powderOnly: { from: '3:knuckle', to: '3:c' },
   bounce: 1,
   snowDrag: 0, // groomed
   showcase: { tag: '1:lip', x: 4 },
@@ -536,9 +540,27 @@ export function heightAt(x: number, z: number): number {
  */
 export const POWDER_DEPTH = 0.09;
 
-/** Top of the powder at (x, z): what you see (riding uses heightAt). */
+/**
+ * How much powder lies at (x, z): 1 = deep, 0 = groomed. Jumpline is
+ * groomed except its last landing, fading in and out over a few metres.
+ */
+export function powderAmount(_x: number, z: number): number {
+  const only = M.powderOnly;
+  if (!only) return 1;
+  const s = -z;
+  const a = tags[only.from];
+  const b = tags[only.to];
+  const fade = 6;
+  return THREE.MathUtils.smoothstep(s, a - 2, a - 2 + fade) * (1 - THREE.MathUtils.smoothstep(s, b, b + fade));
+}
+
+/** Top of the snow at (x, z): what you see (riding uses heightAt). Groomed snow sits right on it. */
 export function powderAt(x: number, z: number): number {
-  return heightAt(x, z) + POWDER_DEPTH + 0.03 * noise(x / 3 + 200, z / 3) + 0.015 * noise(x / 1.2, z / 1.2 + 90);
+  const amount = powderAmount(x, z);
+  const groomed = 0.012; // (just above where the skis ride)
+  if (amount <= 0) return heightAt(x, z) + groomed;
+  const powder = POWDER_DEPTH + 0.03 * noise(x / 3 + 200, z / 3) + 0.015 * noise(x / 1.2, z / 1.2 + 90);
+  return heightAt(x, z) + groomed + (powder - groomed) * amount;
 }
 
 /** Surface normal at (x, z), from finite differences of heightAt. */
@@ -790,7 +812,8 @@ export function createTerrain(): THREE.Group {
   const { course, outer } = terrainGeometry();
   const group = new THREE.Group();
 
-  const powder = new THREE.MeshStandardMaterial({ map: snowTexture(false), roughness: 0.9, vertexColors: true });
+  // (Jumpline is groomed: corduroy; its powder landing shows as lumpy snow)
+  const powder = new THREE.MeshStandardMaterial({ map: snowTexture(!!M.powderOnly), roughness: 0.9, vertexColors: true });
   const courseMesh = new THREE.Mesh(powderGeometry(course), powder);
   const outerMesh = new THREE.Mesh(powderGeometry(outer), powder);
   for (const m of [courseMesh, outerMesh]) {
