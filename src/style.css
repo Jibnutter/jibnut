@@ -1,0 +1,60 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
+}
+canvas {
+  display: block;
+}
+#hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  font: 600 20px/1.2 system-ui, sans-serif;
+  color: #1b2a3a;
+  background: rgba(255, 255, 255, 0.7);
+  padding: 8px 12px;
+  border-radius: 6px;
+  pointer-events: none;
+}
+#hud .power {
+  margin-top: 6px;
+  width: 160px;
+  height: 8px;
+  background: rgba(27, 42, 58, 0.15);
+  border-radius: 4px;
+  overflow: hidden;
+}
+#hud .fill {
+  width: 0;
+  height: 100%;
+  background: #e0672f;
+}
+#hud .hint {
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  opacity: 0.7;
+}
+#trick {
+  position: fixed;
+  top: 30%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font: 800 48px/1.1 system-ui, sans-serif;
+  color: #e0672f;
+  text-shadow: 0 2px 0 #fff, 0 4px 12px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  transform: scale(0.8);
+  transition: opacity 0.2s, transform 0.2s;
+  pointer-events: none;
+}
+#trick.show {
+  opacity: 1;
+  transform: scale(1);
+}
+#trick.crash {
+  color: #c0392b;
+}
