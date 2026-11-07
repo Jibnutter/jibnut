@@ -10,7 +10,7 @@
 
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { mulberry32 } from './terrain';
+import { mulberry32, SUMMER_MAP } from './terrain';
 
 /**
  * Cel-shaded spruces.
@@ -196,9 +196,10 @@ export function createForest(spots: THREE.Vector3[], seed = 42): THREE.Group {
       m.compose(spots[spot], q, scale.set(s, s * (0.9 + rand() * 0.25), s));
       for (const mesh of [needles, snow, trunk, ink]) mesh.setMatrixAt(k, m);
       // Deep spruce greens, a little different on each tree
-      needles.setColorAt(k, tint.setHSL(0.36 + rand() * 0.06, 0.32 + rand() * 0.18, 0.2 + rand() * 0.08));
+      needles.setColorAt(k, tint.setHSL(0.36 + rand() * 0.06, 0.32 + rand() * 0.18, (SUMMER_MAP ? 0.24 : 0.2) + rand() * 0.08));
     });
-    group.add(needles, snow, trunk, ink);
+    group.add(needles, trunk, ink);
+    if (!SUMMER_MAP) group.add(snow); // (summer: bare branches)
   });
   return group;
 }

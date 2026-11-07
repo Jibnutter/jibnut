@@ -89,6 +89,38 @@ interface MapDef extends MapInfo {
   snowDrag: number;
   /** Where the menu's camera circles: the feature at this tag, offset across. */
   showcase: { tag: string; x: number };
+  /** Summer: dirt and grass, no snow (and you ride the bike). */
+  summer?: boolean;
+  /** Dirt doubles: a takeoff and a landing mound with an open gap between. */
+  doubles?: Double[];
+  /** A wooden drop: a ramp up onto a deck that ends in a drop to the slope below. */
+  drop?: Drop;
+}
+
+/**
+ * A dirt double, built up from the ground at its lip's tag: a takeoff
+ * curving up to the lip, a steep back, an open gap (the bare ground), then
+ * the landing mound: a steep face, a short flat top and the landing,
+ * rounding down to the ground again.
+ */
+interface Double {
+  tag: string; // the lip
+  height: number; // lip, above the ground
+  takeoff: number; // m of takeoff
+  gap: number; // m from the lip to the foot of the landing's face
+  landHeight: number; // the landing's top, above the ground
+  top: number; // m of flat top before the landing goes down
+  landing: number; // m of landing
+  halfWidth: number;
+}
+
+/** A wooden drop deck ending at its edge's tag: ramp up, level-ish deck, drop. */
+interface Drop {
+  tag: string; // the edge
+  height: number; // of the edge above the slope
+  ramp: number; // m of ramp up onto the deck
+  deck: number; // m of deck
+  halfWidth: number;
 }
 
 const JUMPLINE: MapDef = {
@@ -246,6 +278,79 @@ const BACKCOUNTRY: MapDef = {
 };
 
 /** Every map, in menu order. */
+const SUMMER: MapDef = {
+  id: 'summer',
+  name: 'Summer Dirt',
+  description: 'The snow is gone: a dirt line down a grassy hill. Four dirt doubles, then a wooden drop. Mind the gaps.',
+  features: ['4 dirt doubles: 4 to 6 m gaps', 'Wooden drop: 2.5 m', 'Bike only'],
+  sMin: -60,
+  startAngle: -14,
+  program: [
+    [40, -14], // the hilltop above
+    [15, 0], // easing onto the start deck
+    [12, 0, 'deck-end'],
+    [6, -18], // the roll-in
+    [14, -18],
+    [10, -7, 'trail'], // onto the dirt line
+
+    // The doubles, on a steady gentle slope (pedal between them)
+    [10, -7],
+    [4, -7, 'd1'],
+    [30, -7, 'd2'],
+    [32, -7, 'd3'],
+    [34, -7, 'd4'],
+
+    // The drop: its deck stands on the slope; past the edge the landing
+    // falls away steeply
+    [30, -7],
+    [26, -9, 'drop'],
+    [4, -30],
+    [10, -30],
+    [14, -6],
+
+    // Finish
+    [20, -5, 'finish'],
+    [30, -3],
+    [10, 8, 'brake'],
+    [22, 9, 'end'],
+    [10, 16],
+    [40, 16],
+  ],
+  tabletops: [],
+  // A gentle S down the hill; straight through the jumps and the drop
+  bends: (t) => [
+    [-60, 0],
+    [t['deck-end'], 0],
+    [t['trail'] + 2, 4],
+    [t['d1'] - 12, 4],
+    [t['d4'] + 14, 4],
+    [t['drop'] - 20, -3],
+    [t['drop'] + 30, -3],
+    [t['finish'], 0],
+  ],
+  courseHalf: 14,
+  bermStart: 30,
+  bermTop: 40,
+  bermHeight: 0,
+  edgeLimit: 34,
+  meshHalf: 40,
+  meshCell: 0.4,
+  wild: { amount: 0.25, from: 'trail' },
+  cliffs: [],
+  park: false,
+  bounce: 0.5,
+  snowDrag: 0,
+  showcase: { tag: 'd2', x: 5 },
+  summer: true,
+  doubles: [
+    { tag: 'd1', height: 1.2, takeoff: 4.5, gap: 3.5, landHeight: 1.0, top: 1.0, landing: 8, halfWidth: 2.5 },
+    { tag: 'd2', height: 1.4, takeoff: 5, gap: 4.5, landHeight: 1.15, top: 1.0, landing: 9, halfWidth: 2.5 },
+    { tag: 'd3', height: 1.6, takeoff: 5.5, gap: 5.5, landHeight: 1.3, top: 1.0, landing: 10, halfWidth: 2.5 },
+    { tag: 'd4', height: 1.8, takeoff: 6, gap: 6, landHeight: 1.45, top: 1.2, landing: 11, halfWidth: 2.6 },
+  ],
+  drop: { tag: 'drop', height: 2.5, ramp: 9, deck: 6, halfWidth: 1.4 },
+};
+
 /**
  * A map made in the map builder: a plain, even slope with a flat start at
  * the top and a run-out and braking zone at the bottom, wide open across.
@@ -292,7 +397,7 @@ function customDef(map: CustomMap): MapDef {
 
 const CUSTOM_MAPS = loadMaps();
 
-export const MAPS: MapInfo[] = [JUMPLINE, BACKCOUNTRY, ...(MAP_BUILDER_ENABLED ? CUSTOM_MAPS.map(customDef) : [])].map(
+export const MAPS: MapInfo[] = [JUMPLINE, BACKCOUNTRY, SUMMER, ...(MAP_BUILDER_ENABLED ? CUSTOM_MAPS.map(customDef) : [])].map(
   ({ id, name, description, features }) => ({ id, name, description, features }),
 );
 
@@ -308,13 +413,15 @@ const M: MapDef = (() => {
   if (CUSTOM) return customDef(CUSTOM);
   const loc = (globalThis as { location?: { search: string } }).location;
   const id = loc ? new URLSearchParams(loc.search).get('map') : null;
-  return [JUMPLINE, BACKCOUNTRY].find((m) => m.id === id) ?? JUMPLINE;
+  return [JUMPLINE, BACKCOUNTRY, SUMMER].find((m) => m.id === id) ?? JUMPLINE;
 })();
 export const MAP: MapInfo = MAPS.find((m) => m.id === M.id)!;
 /** Whether this map is a park (lift, arches, fencing). */
 export const IS_PARK = M.park;
 /** How much of the quirky landing hop this map has. */
 export const MAP_BOUNCE = M.bounce;
+/** Summer: dirt and grass, no snow, and you ride the bike. */
+export const SUMMER_MAP = !!M.summer;
 /** How hard this map's snow holds the skis back (1/s). */
 export const SNOW_DRAG = M.snowDrag;
 
@@ -471,24 +578,43 @@ export interface Jump {
   endZ: number;
   halfWidth: number;
 }
-/** The map's jumps, in order down the course: tabletops, or a kicker (no table: knuckle = lip). */
-export const JUMPS: Jump[] = M.kicker
-  ? [
-      {
-        startZ: zAt(tags[M.kicker.tag] - M.kicker.length),
-        lipZ: zAt(tags[M.kicker.tag]),
-        knuckleZ: zAt(tags[M.kicker.tag]),
-        endZ: zAt(tags[M.kicker.tag] + 30),
-        halfWidth: M.kicker.halfWidth,
-      },
-    ]
-  : M.tabletops.map((hw, k) => ({
-      startZ: zAt(tags[`${k + 1}:a`]),
-      lipZ: zAt(tags[`${k + 1}:lip`]),
-      knuckleZ: zAt(tags[`${k + 1}:knuckle`]),
-      endZ: zAt(tags[`${k + 1}:c`]),
-      halfWidth: hw,
-    }));
+/** The map's jumps, in order down the course: tabletops, a kicker (no table: knuckle = lip), dirt doubles (knuckle: the landing's top) and the drop (lip: its edge). */
+export const JUMPS: Jump[] = [
+  ...(M.kicker
+    ? [
+        {
+          startZ: zAt(tags[M.kicker.tag] - M.kicker.length),
+          lipZ: zAt(tags[M.kicker.tag]),
+          knuckleZ: zAt(tags[M.kicker.tag]),
+          endZ: zAt(tags[M.kicker.tag] + 30),
+          halfWidth: M.kicker.halfWidth,
+        },
+      ]
+    : []),
+  ...M.tabletops.map((hw, k) => ({
+    startZ: zAt(tags[`${k + 1}:a`]),
+    lipZ: zAt(tags[`${k + 1}:lip`]),
+    knuckleZ: zAt(tags[`${k + 1}:knuckle`]),
+    endZ: zAt(tags[`${k + 1}:c`]),
+    halfWidth: hw,
+  })),
+  ...(M.doubles ?? []).map((d) => {
+    const lip = tags[d.tag];
+    const sp = doubleSpan(d);
+    return { startZ: zAt(lip - d.takeoff), lipZ: zAt(lip), knuckleZ: zAt(lip + sp.top + d.top), endZ: zAt(lip + sp.end), halfWidth: d.halfWidth };
+  }),
+  ...(M.drop
+    ? [
+        {
+          startZ: zAt(tags[M.drop.tag] - M.drop.deck - M.drop.ramp),
+          lipZ: zAt(tags[M.drop.tag]),
+          knuckleZ: zAt(tags[M.drop.tag]),
+          endZ: zAt(tags[M.drop.tag] + 16),
+          halfWidth: M.drop.halfWidth,
+        },
+      ]
+    : []),
+];
 
 /** Where the menu's camera circles (world x, z). */
 export const SHOWCASE = (() => {
@@ -559,7 +685,81 @@ function features(s: number, u: number, x: number, z: number): number {
       h += k.height * up * across;
     }
   }
+  if (M.doubles) {
+    for (const d of M.doubles) h += doubleHeight(d, s - tags[d.tag], Math.abs(u));
+  }
+  if (M.drop) h += dropHeight(M.drop, s, Math.abs(u));
   return h;
+}
+
+const DIRT_SIDE = 1.1; // m: a dirt jump's sides fall away over this
+const DECK_SIDE = 0.25; // m: the wooden deck's sides (near vertical: boarded)
+const DECK_ANGLE = Math.tan(THREE.MathUtils.degToRad(3)); // the deck runs down this gently
+
+/** Where a double's landing mound starts and ends (m from the lip). */
+function doubleSpan(d: Double): { face: number; top: number; end: number } {
+  const face = d.gap; // foot of the landing's face
+  const top = face + 1.2; // (the face rises over 1.2 m)
+  return { face, top, end: top + d.top + d.landing };
+}
+
+/** Height a dirt double adds, at dist m past its lip, au across. */
+function doubleHeight(d: Double, dist: number, au: number): number {
+  const sp = doubleSpan(d);
+  if (dist < -d.takeoff || dist > sp.end || au > d.halfWidth + DIRT_SIDE) return 0;
+  const across = 1 - THREE.MathUtils.smoothstep(au, d.halfWidth, d.halfWidth + DIRT_SIDE);
+  let up: number;
+  if (dist <= 0) {
+    // The takeoff: curving up to the lip (y = H t²: its lip angle is 2H/L above the ground)
+    const t = (dist + d.takeoff) / d.takeoff;
+    up = d.height * t * t;
+  } else if (dist < sp.face) {
+    // The lip's steep back, then the open gap
+    up = d.height * (1 - THREE.MathUtils.smoothstep(dist, 0, 0.9));
+  } else if (dist < sp.top) {
+    up = d.landHeight * THREE.MathUtils.smoothstep(dist, sp.face, sp.top);
+  } else if (dist < sp.top + d.top) {
+    up = d.landHeight;
+  } else {
+    // The landing: rounding over the knuckle, steepest midway, rounding into the ground
+    const t = (dist - sp.top - d.top) / d.landing;
+    up = d.landHeight * (0.5 + 0.5 * Math.cos(Math.PI * t));
+  }
+  return up * across;
+}
+
+/** Height the wooden drop adds at course distance s, au across. */
+function dropHeight(d: Drop, s: number, au: number): number {
+  const edge = tags[d.tag];
+  const start = edge - d.deck - d.ramp;
+  const deckStart = start + d.ramp;
+  if (s < start || s > edge + DECK_SIDE || au > d.halfWidth + DECK_SIDE) return 0;
+  const across = 1 - THREE.MathUtils.smoothstep(au, d.halfWidth, d.halfWidth + DECK_SIDE);
+  // The deck's top: a straight line from the edge back up, gently
+  const deckTop = (x: number) => lookup(mainH, edge) + d.height + DECK_ANGLE * (edge - x);
+  let above: number;
+  if (s < deckStart) {
+    // The ramp: a straight board from the ground up to the deck, its foot
+    // eased in (no kink to bump over)
+    const t = (s - start) / d.ramp;
+    const a = 0.15;
+    const lin = t < a ? (t * t) / (2 * a) : t - a / 2;
+    const ground = (x: number) => lookup(mainH, x);
+    const boardTop = ground(start) + ((deckTop(deckStart) - ground(start)) * lin) / (1 - a / 2);
+    above = boardTop - ground(s);
+  } else {
+    above = deckTop(s) - lookup(mainH, s);
+    if (s > edge) above *= 1 - THREE.MathUtils.smoothstep(s, edge, edge + DECK_SIDE); // the drop
+  }
+  return Math.max(0, above) * across;
+}
+
+/** Is course point (s, u) on the drop's deck or ramp (for the boarding)? */
+export function dropDeck(): { start: number; deckStart: number; edge: number; halfWidth: number } | null {
+  const d = M.drop;
+  if (!d) return null;
+  const edge = tags[d.tag];
+  return { start: edge - d.deck - d.ramp, deckStart: edge - d.deck, edge, halfWidth: d.halfWidth };
 }
 
 /** A cliff's bench, 0 -> 1 along it: easing in over the first 40%, then straight. */
@@ -603,6 +803,16 @@ function builtAt(x: number, z: number): number {
     const k = M.kicker;
     const d = cs - tags[k.tag];
     if (d > -k.length - margin && d < 0.5 + margin) built = Math.max(built, 1 - THREE.MathUtils.smoothstep(ax, k.halfWidth + 1.5, k.halfWidth + 1.5 + margin));
+  }
+  for (const d of M.doubles ?? []) {
+    const dist = cs - tags[d.tag];
+    if (dist > -d.takeoff - margin && dist < doubleSpan(d).end + margin) {
+      built = Math.max(built, 1 - THREE.MathUtils.smoothstep(ax, d.halfWidth + DIRT_SIDE, d.halfWidth + DIRT_SIDE + margin));
+    }
+  }
+  const deck = dropDeck();
+  if (deck && cs > deck.start - margin && cs < deck.edge + margin) {
+    built = Math.max(built, 1 - THREE.MathUtils.smoothstep(ax, deck.halfWidth, deck.halfWidth + margin));
   }
   return built;
 }
@@ -752,6 +962,7 @@ export const POWDER_DEPTH = 0.09;
  * groomed except its last landing, fading in and out over a few metres.
  */
 export function powderAmount(_x: number, z: number): number {
+  if (M.summer) return 0; // (no snow at all)
   const only = M.powderOnly;
   if (!only) return 1;
   const s = -z;
@@ -863,6 +1074,129 @@ export function terrainGeometry(): { course: THREE.BufferGeometry; outer: THREE.
 
 // ---------------------------------------------------------------------------
 // Meshes
+
+/** Summer ground: near white (the vertex colours give grass and dirt) with grit and blades. */
+function groundTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#f0f0ea';
+  ctx.fillRect(0, 0, size, size);
+  const rand = mulberry32(23);
+  for (let i = 0; i < 3500; i++) {
+    const light = rand() < 0.4;
+    ctx.fillStyle = light ? `rgba(255, 255, 240, ${rand() * 0.35})` : `rgba(70, 60, 40, ${0.08 + rand() * 0.22})`;
+    if (rand() < 0.5) ctx.fillRect(rand() * size, rand() * size, 1 + rand() * 2, 1 + rand() * 2);
+    else ctx.fillRect(rand() * size, rand() * size, 1, 2 + rand() * 5); // blades and streaks
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+/** Boards: planks across, in a few browns, with dark gaps and grain. */
+function woodTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const rand = mulberry32(31);
+  const plank = 32;
+  for (let y = 0; y < size; y += plank) {
+    const l = 38 + rand() * 12;
+    ctx.fillStyle = `hsl(${28 + rand() * 8}, ${35 + rand() * 15}%, ${l}%)`;
+    ctx.fillRect(0, y, size, plank);
+    for (let k = 0; k < 14; k++) {
+      ctx.fillStyle = `rgba(60, 35, 15, ${0.1 + rand() * 0.15})`;
+      ctx.fillRect(0, y + 2 + rand() * (plank - 4), size, 1);
+    }
+    ctx.fillStyle = 'rgba(30, 18, 8, 0.85)';
+    ctx.fillRect(0, y, size, 2); // the gap between planks
+    ctx.fillStyle = 'rgba(40, 40, 40, 0.8)'; // nails
+    for (const x of [12, size / 2, size - 14]) ctx.fillRect(x, y + plank / 2 - 1, 3, 3);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+/**
+ * The drop's woodwork: boards over its ramp and deck, boarded sides and a
+ * boarded front down to the ground (its shape is in heightAt: this is the
+ * look).
+ */
+function dropMesh(d: Drop): THREE.Group {
+  const edge = tags[d.tag];
+  const start = edge - d.deck - d.ramp;
+  const out = d.halfWidth + 0.35; // the boarding stands just outside the ridden width
+  const top = (s: number) => heightAt(courseX(-s), -s) + 0.03; // (the deck is level across)
+  const ground = (s: number, u: number) => heightAt(courseX(-s) + u, -s) - 0.15;
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  const quad = (a: number[], b: number[], c: number[], e: number[], ua: number[], ub: number[], uc: number[], ue: number[]) => {
+    const i = pos.length / 3;
+    pos.push(...a, ...b, ...c, ...e);
+    uv.push(...ua, ...ub, ...uc, ...ue);
+    idx.push(i, i + 1, i + 2, i, i + 2, i + 3);
+  };
+  const P = (s: number, u: number, y: number) => [courseX(-s) + u, y, -s];
+  const PLANK = 0.14; // m: the texture's plank width (8 planks per repeat)
+  const steps = Math.ceil((edge - start) / 0.25);
+  for (let k = 0; k < steps; k++) {
+    const s0 = start + ((edge - start) * k) / steps;
+    const s1 = start + ((edge - start) * (k + 1)) / steps;
+    const v0 = s0 / (PLANK * 8);
+    const v1 = s1 / (PLANK * 8);
+    // Top: planks running across
+    quad(P(s0, -out, top(s0)), P(s0, out, top(s0)), P(s1, out, top(s1)), P(s1, -out, top(s1)), [0, v0], [1, v0], [1, v1], [0, v1]);
+    // Sides: boards from the deck down into the ground
+    for (const side of [-1, 1]) {
+      const u = side * out;
+      const a = P(s0, u, top(s0));
+      const b = P(s1, u, top(s1));
+      const c = P(s1, u, ground(s1, u + side * 0.3));
+      const e = P(s0, u, ground(s0, u + side * 0.3));
+      const h0 = (top(s0) - ground(s0, u)) / (PLANK * 8);
+      if (side > 0) quad(a, e, c, b, [v0, 0], [v0, h0], [v1, h0], [v1, 0]);
+      else quad(a, b, c, e, [v0, 0], [v1, 0], [v1, h0], [v0, h0]);
+    }
+  }
+  // The front: a wall down from the edge to the slope below it
+  const fs = edge + 0.3;
+  const yTop = top(edge);
+  const yLow = heightAt(courseX(-fs), -fs) - 0.2;
+  quad(P(fs, out, yTop), P(fs, -out, yTop), P(fs, -out, yLow), P(fs, out, yLow), [0, 0], [1, 0], [1, (yTop - yLow) / (PLANK * 8)], [0, (yTop - yLow) / (PLANK * 8)]);
+  quad(P(edge, -out, yTop), P(edge, out, yTop), P(fs, out, yTop), P(fs, -out, yTop), [0, 0], [1, 0], [1, 0.3], [0, 0.3]); // the top of the edge
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  const wood = new THREE.MeshStandardMaterial({ map: woodTexture(), roughness: 0.85, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, wood);
+  mesh.castShadow = mesh.receiveShadow = true;
+  const group = new THREE.Group();
+  group.add(mesh);
+  // Posts at the corners of the front, a little proud of the boarding
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x5a3b22, roughness: 0.9 });
+  for (const u of [-out, out]) {
+    for (const ps of [edge + 0.15, edge - d.deck]) {
+      const yt = top(Math.min(ps, edge)) + 0.12;
+      const yb = heightAt(courseX(-ps) + u, -ps) - 0.3;
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, yt - yb, 0.16), postMat);
+      post.position.set(courseX(-ps) + u + Math.sign(u) * 0.08, (yt + yb) / 2, -ps);
+      post.castShadow = post.receiveShadow = true;
+      group.add(post);
+    }
+  }
+  return group;
+}
 
 function snowTexture(groomed: boolean): THREE.CanvasTexture {
   const size = 256;
@@ -1016,10 +1350,50 @@ function vertexColor(geo: THREE.BufferGeometry, i: number): void {
   const nrm = geo.attributes.normal as THREE.BufferAttribute;
   const steep = THREE.MathUtils.smoothstep(1 - nrm.getY(i), 0.42, 0.62); // ~55° to ~68°
   const bare = steep > 0 ? steep * (1 - builtAt(pos.getX(i), pos.getZ(i))) : 0;
-  tmpColor.lerpColors(SNOW_WHITE, ROCK, bare);
+  if (M.summer) summerColor(pos.getX(i), pos.getZ(i), bare, tmpColor);
+  else tmpColor.lerpColors(SNOW_WHITE, ROCK, bare);
   // Baked sky visibility: hollows and the feet of walls see less sky
   tmpColor.multiplyScalar(skyVisibility(pos.getX(i), pos.getZ(i)));
   (geo.attributes.color as THREE.BufferAttribute).setXYZ(i, tmpColor.r, tmpColor.g, tmpColor.b);
+}
+
+const GRASS = new THREE.Color(0x7aa647).convertSRGBToLinear();
+const GRASS_DRY = new THREE.Color(0x9aa64a).convertSRGBToLinear();
+const DIRT = new THREE.Color(0x8c6a48).convertSRGBToLinear();
+const DIRT_PACKED = new THREE.Color(0xa58460).convertSRGBToLinear();
+const tmpDirt = new THREE.Color();
+const TRAIL_HALF = 3.2; // m: the dirt line's half-width (wider round the features)
+
+/**
+ * Summer ground: grass in patches of greener and drier, a dirt trail down
+ * the course (the jumps and the drop's landing packed smooth), and bare
+ * rock where it's steep.
+ */
+function summerColor(x: number, z: number, bare: number, out: THREE.Color): void {
+  // Grass, patchy
+  const patch = THREE.MathUtils.clamp(0.5 + 0.6 * noise(x / 18 + 700, z / 18) + 0.3 * noise(x / 5, z / 5 + 800), 0, 1);
+  out.lerpColors(GRASS, GRASS_DRY, patch * 0.7);
+  // The trail
+  courseCoords(x, z);
+  const s = cs;
+  const ax = Math.abs(cu);
+  let dirt = 0;
+  if (s > tags['deck-end'] - 14 && s < tags['end'] + 10) {
+    const edge = TRAIL_HALF + 0.8 * noise(s / 6 + 900, 3) + (s < tags['deck-end'] + 2 ? 4 : 0) + (s > tags['finish'] - 10 ? 6 : 0);
+    dirt = 1 - THREE.MathUtils.smoothstep(ax, edge, edge + 1.2);
+  }
+  const built = builtAt(x, z);
+  dirt = Math.max(dirt, built);
+  if (M.drop) {
+    // The drop's landing: worn wide
+    const d = s - tags[M.drop.tag];
+    if (d > -2 && d < 20) dirt = Math.max(dirt, 1 - THREE.MathUtils.smoothstep(ax, 4.5, 6));
+  }
+  if (dirt > 0) {
+    tmpDirt.lerpColors(DIRT, DIRT_PACKED, Math.max(built, 0.5 + 0.5 * noise(x / 3 + 1000, z / 3)));
+    out.lerp(tmpDirt, dirt);
+  }
+  out.lerp(ROCK, bare);
 }
 
 /** The visible course mesh (custom maps edit it live). */
@@ -1081,7 +1455,7 @@ export function createTerrain(): THREE.Group {
   const group = new THREE.Group();
 
   // (Jumpline is groomed: corduroy; its powder landing shows as lumpy snow)
-  const powder = new THREE.MeshStandardMaterial({ map: snowTexture(!!M.powderOnly), roughness: 0.9, vertexColors: true });
+  const powder = new THREE.MeshStandardMaterial({ map: M.summer ? groundTexture() : snowTexture(!!M.powderOnly), roughness: M.summer ? 0.95 : 0.9, vertexColors: true });
   const courseMesh = new THREE.Mesh(powderGeometry(course), powder);
   coursePowder = courseMesh.geometry;
   courseMesh.frustumCulled = !CUSTOM; // (edited live: its bounds change)
@@ -1097,6 +1471,9 @@ export function createTerrain(): THREE.Group {
   const fx = courseX(finishZ);
   const span = M.park ? COURSE_HALF + 1 : 26;
   group.add(dyeLine(finishZ, fx - span, fx + span, 0.6, new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.9, side: THREE.DoubleSide })));
+
+  if (M.drop) group.add(dropMesh(M.drop));
+  if (M.summer) return group; // (no dye on dirt)
 
   // Blue dye across each jump's lip and knuckle, as in a real park
   const dye = new THREE.MeshStandardMaterial({ color: 0x2f6fd6, roughness: 0.9, side: THREE.DoubleSide });

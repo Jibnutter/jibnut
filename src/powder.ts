@@ -9,7 +9,7 @@
 // file for details.
 
 import * as THREE from 'three';
-import { heightAt, normalAt, powderAt, powderAmount, POWDER_DEPTH } from './terrain';
+import { heightAt, normalAt, powderAt, powderAmount, POWDER_DEPTH, SUMMER_MAP } from './terrain';
 import { railAt } from './rails';
 import type { Skier } from './skier';
 import type { Controls } from './input';
@@ -385,7 +385,7 @@ function sprayMaterial(): THREE.ShaderMaterial {
         float r = length(d) * 2.0;
         float soft = smoothstep(1.0, 0.2, r);
         if (soft <= 0.0) discard;
-        gl_FragColor = vec4(0.97, 0.98, 1.0, vAlpha * soft);
+        gl_FragColor = vec4(${SUMMER_MAP ? '0.62, 0.5, 0.36' : '0.97, 0.98, 1.0'}, vAlpha * soft); // (summer: dust)
       }`,
   });
 }

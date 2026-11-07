@@ -20,7 +20,7 @@ import './style.css';
 import { Skier } from './skier';
 import { ChaseCamera } from './chaseCamera';
 import { readControls } from './input';
-import { createTerrain, MAP, SHOWCASE, CAN_BUILD, SPAWN, CUSTOM, heightAt, courseX, START_Z, FINISH_Z, END_Z, DECK_END_Z } from './terrain';
+import { createTerrain, MAP, SHOWCASE, CAN_BUILD, SPAWN, CUSTOM, SUMMER_MAP, heightAt, courseX, START_Z, FINISH_Z, END_Z, DECK_END_Z } from './terrain';
 import { Scenery } from './scenery';
 import { createRails } from './rails';
 import { Powder } from './powder';
@@ -226,7 +226,8 @@ function dress(): void {
   if (key === dressedIn) return; // (Nuts changed, not the clothes)
   dressedIn = key;
   skier.setOutfit(o);
-  skier.setGear(o.gear.kind === 'board' ? 'board' : o.gear.kind === 'bike' ? 'bike' : o.gear.kind === 'wide-skis' ? 'zebra' : 'classic');
+  // (No snow in summer: everyone rides the bike)
+  skier.setGear(SUMMER_MAP || o.gear.kind === 'bike' ? 'bike' : o.gear.kind === 'board' ? 'board' : o.gear.kind === 'wide-skis' ? 'zebra' : 'classic');
 }
 dress();
 progress.onProgress(dress);
