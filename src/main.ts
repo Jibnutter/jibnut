@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { SkyDome, SUN_DIRECTION, skyEnvironment } from './sky';
+import { SkyDome, skyEnvironment } from './sky';
+import { Sunlight } from './sunlight';
 
 const EXPOSURE = 0.6;
 const ENV_INTENSITY = 0.45;
@@ -21,6 +22,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap; // soft-edged shadows
 // Filmic tone mapping: the sky is in physical (HDR) units, and bright snow
 // rolls off softly instead of clipping flat white
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -61,21 +63,14 @@ chase.snap();
 const physicsDebug = new PhysicsDebug(physics);
 scene.add(physicsDebug.lines);
 
-// Lighting
-// The sun: warm, and strong (tone mapping brings it back down). The sky's
-// light comes from the environment map.
-const sun = new THREE.DirectionalLight(0xfff1df, 3.4);
-sun.castShadow = true;
-sun.target = skier.object; // keep the shadow area around the start
-sun.shadow.camera.left = sun.shadow.camera.bottom = -40;
-sun.shadow.camera.right = sun.shadow.camera.top = 40;
-sun.shadow.mapSize.set(2048, 2048);
-sun.position.copy(skier.object.position).addScaledVector(SUN_DIRECTION, 70);
-scene.add(sun);
+// Lighting: the sun, with cascaded shadows (near and far). The sky's light
+// comes from the environment map.
+const sunlight = new Sunlight(scene, camera);
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
+  sunlight.updateFrustums();
   renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
@@ -179,6 +174,7 @@ window.addEventListener('keydown', (e) => {
     trickEl.className = '';
     if (chase.firstPerson) {
       chase.toggle();
+      sunlight.updateFrustums();
       goggleTint.classList.remove('on');
     }
     skier.view.visible = false;
@@ -194,6 +190,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyC') {
     chase.toggle(); // first / third person
+    sunlight.updateFrustums();
     goggleTint.classList.toggle('on', chase.firstPerson);
   }
   if (e.code === 'KeyK') {
@@ -208,7 +205,6 @@ let stoppedFor = 0;
 const timer = new THREE.Timer();
 const tmpLocker = new THREE.Vector3();
 const tmpLockerSide = new THREE.Vector3();
-const sunOffset = SUN_DIRECTION.clone().multiplyScalar(70); // the light comes from the sky's sun
 
 renderer.setAnimationLoop((time) => {
   timer.update(time);
@@ -272,7 +268,6 @@ renderer.setAnimationLoop((time) => {
     camera.lookAt(x, y - 2, z);
   }
   powder.setView(renderer.domElement.height, camera.fov);
-  sun.position.copy(skier.object.position).add(sunOffset);
 
   const state =
     (skier.mode === 'tumbling' ? '  ·  crashed' : skier.grounded ? '' : '  ·  air') +
@@ -282,5 +277,6 @@ renderer.setAnimationLoop((time) => {
   powerEl.style.width = `${skier.charge * 100}%`;
 
   sky.update(dt, camera);
+  sunlight.update();
   renderer.render(scene, camera);
 });

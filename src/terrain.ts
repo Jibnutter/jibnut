@@ -795,6 +795,7 @@ export function createTerrain(): THREE.Group {
   const outerMesh = new THREE.Mesh(powderGeometry(outer), powder);
   for (const m of [courseMesh, outerMesh]) {
     m.receiveShadow = true;
+    m.castShadow = true; // jumps, cliffs and ridges shade the snow beyond them
     group.add(m);
   }
 

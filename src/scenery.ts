@@ -195,6 +195,7 @@ function createTrees(): THREE.Group {
   const trunk = new THREE.CylinderGeometry(0.25, 0.35, 2, 6).translate(0, 1, 0);
   const leaves = new THREE.InstancedMesh(foliage, new THREE.MeshStandardMaterial({ color: 0x2f5a3c, roughness: 0.9 }), spots.length);
   const wood = new THREE.InstancedMesh(trunk, new THREE.MeshStandardMaterial({ color: 0x4a3426, roughness: 0.9 }), spots.length);
+  leaves.castShadow = wood.castShadow = true; // (long shadows across the snow)
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const scale = new THREE.Vector3();
