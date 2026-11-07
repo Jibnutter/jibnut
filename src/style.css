@@ -575,6 +575,9 @@ canvas {
   --shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect x='6' y='1' width='12' height='38' rx='5'/%3E%3Crect x='22' y='1' width='12' height='38' rx='5'/%3E%3C/svg%3E");
   background: repeating-linear-gradient(160deg, #f4f4f1 0 5px, #111 5px 9px);
 }
+#start .swatch[data-kind='bike'] {
+  --shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40' fill='none' stroke='black' stroke-width='3'%3E%3Ccircle cx='9' cy='26' r='7'/%3E%3Ccircle cx='31' cy='26' r='7'/%3E%3Cpath d='M9 26 17 14h10l4 12M17 14l-2-4h-4M27 14l1-5h4M20 26l7-12'/%3E%3C/svg%3E");
+}
 #start .swatch[data-kind='shorts'] {
   --shape: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath d='M8 8h24l3 22h-12l-3-10-3 10H5z'/%3E%3C/svg%3E");
 }

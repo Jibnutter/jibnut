@@ -13,6 +13,7 @@ import type { SecondaryMotion } from './secondary';
 import { createHeadgear } from './helmet';
 import { createBootCuff } from './gear';
 import { BOARD_STANCE } from './boardModel';
+import { PEDAL_X, GRIPS } from './bikeModel';
 
 /**
  * Placeholder human: a three-part spine (pelvis, abdomen, chest), a sphere
@@ -321,6 +322,17 @@ export class Person {
     this.group.rotation.y = on ? -Math.PI / 2 : 0;
     this.pose(RIDING);
   }
+  /**
+   * On a mountain bike: feet on the pedals (side by side, the "skis" are the
+   * bike's halves, see bikeModel), hands on the grips. The grab (Space) is a
+   * no-hander: both hands off the bars, out wide.
+   */
+  bike = false;
+  setBike(on: boolean): void {
+    this.bike = on;
+    this.pose(RIDING);
+  }
+
   /** Where the grabbing hand holds its ski / the board, in that ski's (or board half's) own frame. */
   grabHoldLocal(out: THREE.Vector3): THREE.Vector3 {
     return this.board
@@ -498,13 +510,13 @@ export class Person {
       // Legs: from the (possibly turned) hips down to the ankles on the
       // boots, which stay with the skis. Knees point between the two.
       j.hips[i].copy(j.hipCentre).addScaledVector(side, s * BODY.hipWidth);
-      j.ankles[i].set(s * (this.board ? BOARD_STANCE : BODY.stance), BODY.ankleHeight, 0);
+      j.ankles[i].set(s * (this.board ? BOARD_STANCE : this.bike ? PEDAL_X : BODY.stance), BODY.ankleHeight, 0);
       // The grab: on skis, feet and skis move to the X; on a board both feet
       // come up together (blended in by p.grab)
       const g = p.grab;
       // (A shifty turns both legs and skis together, from the hips)
-      const skiYaw = this.board ? 0 : GRAB.yaw[i] * g + p.shifty * SHIFTY.skis;
-      if (g > 0) {
+      const skiYaw = this.board ? 0 : (this.bike ? 0 : GRAB.yaw[i] * g) + p.shifty * SHIFTY.skis;
+      if (g > 0 && !this.bike) {
         if (this.board) j.ankles[i].y += BOARD_GRAB_LIFT * g;
         else j.ankles[i].lerp(i === 1 ? GRAB.rightAnkle : GRAB.leftAnkle, g);
       }
@@ -523,7 +535,7 @@ export class Person {
         // The board runs along the line between the feet (the body's x),
         // nose (half 0) under the left foot
         ski.q.setFromAxisAngle(UP, Math.PI / 2);
-      } else if (g > 0) ski.q.slerp(tmpPitchQ.copy(this.shins[i].mesh.quaternion).multiply(this.bootRest[i]), g);
+      } else if (g > 0 && !this.bike) ski.q.slerp(tmpPitchQ.copy(this.shins[i].mesh.quaternion).multiply(this.bootRest[i]), g);
       // Shifty: the skis turned with the legs, tips pointing down a little
       if (!this.board && p.shifty !== 0) {
         tmpPitchQ.setFromAxisAngle(UP, p.shifty * SHIFTY.skis).multiply(tmpFlexQ.setFromAxisAngle(tmpX.set(1, 0, 0), -Math.abs(p.shifty) * SHIFTY.tipDown));
@@ -551,8 +563,17 @@ export class Person {
           .addScaledVector(shoulderSide, s * 0.08);
         hand.lerp(overhead, p.armsUp);
       }
-      if (sec) hand.add(sec.hand(i, tmpHandOff)); // trailing hands
-      if (i === 1 && p.grab > 0) {
+      if (this.bike) {
+        // On the grips (they turn and lean with the bike, i.e. half 0); a
+        // no-hander (the grab) takes both hands off, out wide and up
+        const grip = tmpHold.copy(GRIPS[i]).applyQuaternion(this.skiPoses[0].q).add(this.skiPoses[0].p);
+        hand.copy(grip);
+        if (p.grab > 0) {
+          const out = tmpOut.copy(j.shoulders[i]).addScaledVector(shoulderSide, s * 0.45).addScaledVector(spine, 0.15);
+          hand.lerp(out, p.grab);
+        }
+      } else if (sec) hand.add(sec.hand(i, tmpHandOff)); // trailing hands
+      if (i === 1 && p.grab > 0 && !this.bike) {
         // Grabbing: the right hand goes to the right ski's tail (on a board:
         // the toe edge)
         const hold = this.grabHoldLocal(tmpHold)

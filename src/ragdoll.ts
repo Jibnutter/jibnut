@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { RAPIER, type Physics } from './physics';
 import { BODY, MASS, type Person, type Segment } from './person';
 import { BOARD_LENGTH, BOARD_STANCE } from './boardModel';
+import { BIKE_BOX, BIKE_MASS } from './bikeModel';
 
 /**
  * The always-on ragdoll: the rider you see is this, all the time.
@@ -197,6 +198,8 @@ export class Ragdoll {
   private readonly person: Person;
   /** On a snowboard: the two "skis" are the board's halves, joined rigidly, never let go. */
   private readonly board: boolean;
+  /** On the mountain bike: the two "skis" are the bike (under the left pedal) and the right pedal. */
+  private readonly bike: boolean;
   private readonly grabHand: Part;
   private readonly skiJoints: (RAPIER.ImpulseJoint | null)[] = [null, null];
   private readonly lastSkiVel = [new THREE.Vector3(), new THREE.Vector3()];
@@ -222,6 +225,7 @@ export class Ragdoll {
     this.physics = physics;
     this.person = person;
     this.board = person.board;
+    this.bike = person.bike;
     const world = physics.world;
     frame.updateMatrixWorld(true);
     const rootRot = frame.getWorldQuaternion(new THREE.Quaternion());
@@ -309,7 +313,16 @@ export class Ragdoll {
       const part = makeBody(g, RAPIER.RigidBodyDesc.dynamic(), 0.3);
       // A flat box: its flat base stops the ski rolling over under the rider
       // (a round capsule let riders tip sideways after hard landings)
-      if (this.board) {
+      if (this.bike) {
+        // The bike: half 0 a box round its wheels and frame, down to the
+        // snow; half 1 just the right pedal
+        if (i === 0) {
+          const { centre, half } = BIKE_BOX;
+          addCollider(part, RAPIER.ColliderDesc.cuboid(half.x, half.y, half.z), BIKE_MASS - 1, 8 * half.x * half.y * half.z, RIDING_SKI_FRICTION, undefined, centre);
+        } else {
+          addCollider(part, RAPIER.ColliderDesc.cuboid(0.05, 0.012, 0.05), 1, 0.1 * 0.024 * 0.1, RIDING_SKI_FRICTION);
+        }
+      } else if (this.board) {
         // Half the board, from its foot to the nose (half 0) or tail (half 1)
         const halfLen = BOARD_LENGTH / 4;
         const offset = new THREE.Vector3(0, 0, (i === 0 ? -1 : 1) * (halfLen - BOARD_STANCE));
@@ -671,6 +684,18 @@ export class Ragdoll {
     this.skiSprings.length = 0;
     this.dropCore();
     this.dropGrab(); // (and let go of the grab)
+    if (this.bike) {
+      // Coming off the bike: the feet leave the pedals, the bike goes its own way
+      for (let i = 0; i < 2; i++) {
+        const joint = this.skiJoints[i];
+        if (!joint) continue;
+        this.physics.world.removeImpulseJoint(joint, true);
+        this.skiJoints[i] = null;
+        // (and its muscle: it's no longer there to drive)
+        const k = this.joints.findIndex((jt) => jt.joint === joint);
+        if (k >= 0) this.joints.splice(k, 1);
+      }
+    }
     for (const ski of this.skis) {
       for (let c = 0; c < ski.body.numColliders(); c++) {
         ski.body.collider(c).setCollisionGroups(RAGDOLL_GROUPS);

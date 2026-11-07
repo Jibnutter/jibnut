@@ -20,6 +20,7 @@ import { Top } from './top';
 import type { Outfit } from './progress';
 import { createSki, type SkiStyle } from './skiModel';
 import { createBoardHalf, BOARD_STANCE, BOARD_LENGTH } from './boardModel';
+import { createBikeHalf, animateBike, BB_HEIGHT, BIKE_MASS } from './bikeModel';
 import { groundAt, railAt, type RailContact } from './rails';
 import {
   Person,
@@ -71,6 +72,12 @@ const MAX_SLOPE_NY = 0.5; // surfaces steeper than 60° count as walls, not slop
 // Rails: steel slides far more easily than snow
 const RAIL_FRICTION = 0.02;
 const RAIL_CATCH_BELOW = 0.3; // m: landing this far below a rail's top still catches it
+// The bike
+const BIKE_POSE = { hipHeight: 0.84, hipBack: 0.26, torsoPitch: 1.05 }; // (balanced: the mass right over the pedals)
+const BIKE_SKID_ANGLE = 0.7; // rad: the back wheel skids round this far
+const PEDAL_ACCEL = 3; // m/s² pedalling from a standstill ...
+const PEDAL_TOP_SPEED = 9; // ... fading out by this speed (m/s)
+const BIKE_WHEEL_R = 0.37;
 const ROLL_OFF_SPIN = 0.35; // of the carve's turn kept when rolling off an edge (no pop)
 const MIN_GRIND = 0.25; // s: slides shorter than this don't get called out
 // Grabs (hold Space in the air)
@@ -223,6 +230,11 @@ const SKIS_IN_STANCE = [-STANCE, STANCE].map((x) => ({
   d: new THREE.Vector3(0, 0, 1),
 }));
 // ... or the board's two halves, one under each foot along the board
+// ... or the bike: two rods along it, low between the wheels
+const BIKE_IN_STANCE = [-0.05, 0.05].map((x) => ({
+  p: new THREE.Vector3(x, BB_HEIGHT * 0.9, -0.15),
+  d: new THREE.Vector3(0, 0, 1),
+}));
 const BOARD_FLOAT = 0.12; // m: a board rides on top of the powder
 const BOARD_IN_STANCE = [-BOARD_STANCE, BOARD_STANCE].map((z) => ({
   p: new THREE.Vector3(0, 0.015 + BOARD_FLOAT, z),
@@ -515,24 +527,43 @@ export class Skier {
 
   /** Riding a snowboard (instead of skis). */
   board = false;
+  /** Riding the mountain bike (instead of skis). */
+  bike = false;
+  // The bike's moving parts (see animateBike)
+  private wheelRoll = 0;
+  private crank = 0;
+  private steerShown = 0;
 
   /** Which skis (when not on the board). */
   private skiStyle: SkiStyle = 'classic';
 
   /** Ride these: skis of a style, or the snowboard. Takes effect from the next (re)start. */
-  setGear(gear: SkiStyle | 'board'): void {
+  setGear(gear: SkiStyle | 'board' | 'bike'): void {
     const on = gear === 'board';
-    if (!on) {
-      if (gear === this.skiStyle && !this.board) return;
+    const bike = gear === 'bike';
+    if (!on && !bike) {
+      if (gear === this.skiStyle && !this.board && !this.bike) return;
       this.skiStyle = gear;
-    } else if (this.board) return;
+    } else if ((on && this.board) || (bike && this.bike)) return;
     this.board = on;
+    this.bike = bike;
+    this.person.setBike(bike);
     this.person.setBoard(on);
-    // A board floats on top of the powder (skis ride buried in it)
-    this.person.group.position.y = on ? BOARD_FLOAT : 0;
-    this.skis.position.y = on ? BOARD_FLOAT : 0;
+    // A board floats on top of the powder (skis ride buried in it); a bike's
+    // pedals ride a bottom bracket's height up (its wheels reach the snow)
+    const lift = on ? BOARD_FLOAT : bike ? BB_HEIGHT - 0.015 : 0;
+    this.person.group.position.y = lift;
+    this.skis.position.y = lift;
     this.skis.remove(...this.skiModels);
-    this.skiModels.splice(0, 2, ...(on ? [createBoardHalf(0), createBoardHalf(1)] : [createSki(-STANCE, this.skiStyle), createSki(STANCE, this.skiStyle)]));
+    this.skiModels.splice(
+      0,
+      2,
+      ...(on
+        ? [createBoardHalf(0), createBoardHalf(1)]
+        : bike
+          ? [createBikeHalf(0), createBikeHalf(1)]
+          : [createSki(-STANCE, this.skiStyle), createSki(STANCE, this.skiStyle)]),
+    );
     this.skis.add(...this.skiModels);
     if (this.ragdoll) {
       this.ragdoll.destroy();
@@ -544,6 +575,7 @@ export class Skier {
 
   /** The skis (or board halves) as mass rods, for the body's mass properties. */
   private skiRods(): [{ p: THREE.Vector3; d: THREE.Vector3 }[], number, number] {
+    if (this.bike) return [BIKE_IN_STANCE, BIKE_MASS / 2, 1.2];
     return this.board ? [BOARD_IN_STANCE, SKI_MASS, BOARD_LENGTH / 2] : [SKIS_IN_STANCE, SKI_MASS, SKI_LENGTH];
   }
 
@@ -562,6 +594,24 @@ export class Skier {
       ski.quaternion.copy(g).multiply(pose.q);
       if (this.grounded) ski.rotateZ(this.lean * EDGE_PER_LEAN);
     });
+  }
+
+  /**
+   * The bike's moving parts: wheels rolling with the speed (spinning on in
+   * the air), the front end steering into turns, the suspension squashing
+   * with the legs, the cranks turning while pedalling. On the posed bike and
+   * on the ragdoll's visible copy.
+   */
+  private animateBike(dt: number, input: Controls): void {
+    this.wheelRoll += (this.speed / BIKE_WHEEL_R) * dt;
+    if (input.tuck && this.grounded) this.crank += 7 * dt;
+    const steerTo = this.grounded ? THREE.MathUtils.clamp(this.turnRate * 0.18, -0.35, 0.35) : 0;
+    this.steerShown += (steerTo - this.steerShown) * (1 - Math.exp(-10 * dt));
+    // The legs' squash (secondary compress goes negative as they fold) is the suspension's
+    const squash = THREE.MathUtils.clamp(-this.secondary.compress.value / 0.22, 0, 1);
+    const halves: THREE.Object3D[] = [this.skiModels[0]];
+    if (this.ragdoll) halves.push(this.ragdoll.visualOf(this.skiModels[0]));
+    for (const h of halves) animateBike(h, this.wheelRoll, this.steerShown, squash, this.crank);
   }
 
   /** Put on these clothes (they snap onto the body). */
@@ -865,7 +915,7 @@ export class Skier {
     this.ragdoll.headVisual.visible = !this._firstPerson;
     this.bottoms.bind(this.ragdoll);
     this.top.bind(this.ragdoll);
-    if (this.physicalMode && !this.board) {
+    if (this.physicalMode && !this.board && !this.bike) {
       this.ride = new PhysicalRide(this.ragdoll);
       this.ride.onBounce = () => this.onBounce?.();
     }
@@ -1124,12 +1174,15 @@ export class Skier {
     if (input.steer !== 0 && !loading) this.skidSide = input.steer;
     // (Held across for as long as we brake: standing across the hill holds us still)
     const stopping = input.brake && !loading && !grinding;
-    const skidTarget = stopping ? this.skidSide * SKID_ANGLE : 0;
+    // (A bike skids its back wheel round less far than skis turn across)
+    const skidTarget = stopping ? this.skidSide * (this.bike ? BIKE_SKID_ANGLE : SKID_ANGLE) : 0;
     this.skid += (skidTarget - this.skid) * (1 - Math.exp(-SKID_RATE * dt));
     if (Math.abs(this.skid) < 1e-3 && !stopping) this.skid = 0;
     if (input.brake && !loading) accel -= BRAKE_DECEL + SKID_DECEL * Math.abs(this.skid) / SKID_ANGLE;
     // Turning scrubs off some speed, like skidding the skis round
     if (!grinding) accel -= TURN_SCRUB * Math.abs(input.steer) * speed;
+    // On the bike, W pedals: a push forward, fading as the speed builds
+    if (this.bike && input.tuck && !loading) accel += PEDAL_ACCEL * Math.max(0, 1 - speed / PEDAL_TOP_SPEED);
     speed = Math.max(0, speed + accel * dt);
     this.velocity.copy(dir).multiplyScalar(speed);
     this.suspension(dt, dir, n, grinding);
@@ -1431,9 +1484,10 @@ export class Skier {
     const grabbed = this.grabTime >= MIN_GRAB;
     const shifty = this.shiftyTime >= MIN_GRAB;
     let trick = trickName(this.airSpin, pitch, this.takeoffSwitch);
-    const grabName = this.board ? 'Indy' : 'X-Tail';
+    const grabName = this.board ? 'Indy' : this.bike ? 'No-hander' : 'X-Tail';
     if (grabbed) trick = trick ? `${trick} ${grabName}` : grabName;
-    if (shifty) trick = trick ? `${trick} Shifty` : 'Shifty';
+    const shiftyName = this.bike ? 'Tabletop' : 'Shifty';
+    if (shifty) trick = trick ? `${trick} ${shiftyName}` : shiftyName;
     const points = trickPoints(this.airSpin, pitch, grabbed) + (shifty ? POINTS.shifty : 0);
     if (saved) {
       // A crash ridden away (crashes off): half points
@@ -1619,6 +1673,13 @@ export class Skier {
       else if (this.weight < 0) lerpPose(t, LEAN_FORWARD, -this.weight, t);
     }
     t.lean = this.lean;
+    if (this.bike) {
+      // On the bike: bent forward over the bars (hands on the grips, see
+      // Person), hips a little back, a bit lower in the air
+      t.torsoPitch = Math.max(t.torsoPitch, BIKE_POSE.torsoPitch);
+      t.hipBack = BIKE_POSE.hipBack + (t.hipBack - RIDING.hipBack) * 0.5;
+      t.hipHeight = Math.min(t.hipHeight, this.grounded ? BIKE_POSE.hipHeight : BIKE_POSE.hipHeight - 0.04);
+    }
     // Shifty (Right Shift, in the air): skis turned 45° to the left, tips
     // dipped, shoulders the other way, held as long as the key is; it
     // springs back when let go
@@ -1659,6 +1720,7 @@ export class Skier {
     }
     this.person.pose(this.current, this.secondary);
     this.placeSkis();
+    if (this.bike) this.animateBike(dt, input);
     this.updateMass(!this.grounded);
   }
 }

@@ -20,7 +20,7 @@ export interface Item {
   name: string;
   price: number;
   slot: 'bottom' | 'top' | 'gear';
-  kind: 'shorts' | 'pants' | 'tee' | 'jacket' | 'skis' | 'wide-skis' | 'board';
+  kind: 'shorts' | 'pants' | 'tee' | 'jacket' | 'skis' | 'wide-skis' | 'board' | 'bike';
   color: number;
 }
 
@@ -35,6 +35,7 @@ export const STORE: Item[] = [
   { id: 'black-pants', name: 'Black baggy snowpants', price: 1200, slot: 'bottom', kind: 'pants', color: 0x1b1c1f },
   { id: 'white-jacket', name: 'White windbreaker', price: 1000, slot: 'top', kind: 'jacket', color: 0xf4f5f2 },
   { id: 'zebra-skis', name: 'Wide zebra skis', price: 4000, slot: 'gear', kind: 'wide-skis', color: 0xf4f4f1 },
+  { id: 'mtb', name: 'Full-suspension MTB', price: 3000, slot: 'gear', kind: 'bike', color: 0xff7a1c },
 ];
 
 /** Everything there is: the free starting gear and the store's. */
@@ -43,7 +44,7 @@ export const ALL: Item[] = [DEFAULT_GEAR, DEFAULT_TOP, DEFAULT_BOTTOM, ...STORE]
 export interface Outfit {
   bottom: Item;
   top: Item;
-  /** Which skis. */
+  /** Which skis (or the bike). */
   gear: Item;
 }
 

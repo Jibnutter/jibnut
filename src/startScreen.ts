@@ -137,6 +137,9 @@ export class StartScreen {
           <dt><kbd>Space</kbd></dt><dd>Hold: X tail grab (skis crossed, right hand on the right tail). Let go before you land!</dd>
           <dt class="group">Rails</dt><dd class="group"></dd>
           <dt><kbd>A</kbd> / <kbd>D</kbd></dt><dd>Swing the skis across for a boardslide</dd>
+          <dt class="group">On the mountain bike</dt><dd class="group"></dd>
+          <dt><kbd>W</kbd></dt><dd>Pedal</dd>
+          <dt><kbd>Space</kbd> / <kbd>Right Shift</kbd></dt><dd>In the air: no-hander / tabletop</dd>
           <dt class="group">Anytime</dt><dd class="group"></dd>
           <dt><kbd>C</kbd></dt><dd>First / third person</dd>
           <dt><kbd>R</kbd></dt><dd>Restart the run</dd>

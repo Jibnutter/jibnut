@@ -199,7 +199,7 @@ function dress(): void {
   if (key === dressedIn) return; // (Nuts changed, not the clothes)
   dressedIn = key;
   skier.setOutfit(o);
-  skier.setGear(o.gear.kind === 'board' ? 'board' : o.gear.kind === 'wide-skis' ? 'zebra' : 'classic');
+  skier.setGear(o.gear.kind === 'board' ? 'board' : o.gear.kind === 'bike' ? 'bike' : o.gear.kind === 'wide-skis' ? 'zebra' : 'classic');
 }
 dress();
 progress.onProgress(dress);
@@ -276,7 +276,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (building.active) return; // (riding keys wait while building)
   if (e.code === 'KeyR') restart();
-  if (e.code === 'KeyP' && !skier.board) {
+  if (e.code === 'KeyP' && !skier.board && !skier.bike) {
     // Fully physical skiing on/off (from the start of a fresh run)
     skier.physicalMode = !skier.physicalMode;
     restart();
