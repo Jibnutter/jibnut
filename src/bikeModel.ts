@@ -55,7 +55,7 @@ export interface BikeDesign {
    * triangle driven by two short links round the bottom bracket, a boxy
    * swingarm and more travel.
    */
-  style: 'trail' | 'downhill' | 'mine';
+  style: 'trail' | 'downhill' | 'mine' | 'santa';
 }
 
 export const DEFAULT_DESIGN: BikeDesign = {
@@ -201,8 +201,127 @@ function frameTransform(d: BikeDesign): THREE.Matrix4 {
   return new THREE.Matrix4().makeTranslation(g.rearAxle.x - rNow.x, g.rearAxle.y - rNow.y, g.rearAxle.z - rNow.z).multiply(m);
 }
 
+// ---------------------------------------------------------------------------
+// "Santa Claus": a downhill bike from a 3D model (src/models/santa-claus.glb,
+// made from "Santa Cruz V10 Downhill Mountain Bicycle" by Arsen Ismailov,
+// CC BY 4.0: trimmed to the frame, shock, seat, fork and cockpit, its
+// textures and badges removed, painted in Santa's colours). Two pieces:
+// the frame (rigid) and the front end (fork, stem and bars), which steers.
+// It keeps its own geometry: the workshop's sliders don't reshape it.
+
+interface SantaModel {
+  frame: THREE.BufferGeometry;
+  front: THREE.BufferGeometry;
+  // Key points, in the model's space (metres, forward -z, up y)
+  frontAxle: THREE.Vector3;
+  rearAxle: THREE.Vector3;
+  bb: THREE.Vector3;
+  grips: THREE.Vector3[];
+  steerTop: THREE.Vector3;
+  steerBottom: THREE.Vector3;
+}
+let santaModel: SantaModel | null = null;
+const SANTA_WHEEL_R = 0.37; // (29" wheels, as on the model)
+/** Whether the Santa Claus bike is loaded (the workshop offers it once it is). */
+export function hasSantaModel(): boolean {
+  return !!santaModel;
+}
+
+/** Load the Santa Claus bike (once, at startup). */
+export async function loadSantaModel(): Promise<void> {
+  const [{ GLTFLoader }, { default: url }] = await Promise.all([
+    import('three/addons/loaders/GLTFLoader.js'),
+    import('./models/santa-claus.glb?url'),
+  ]);
+  const gltf = await new GLTFLoader().loadAsync(url);
+  const geo = (name: string) => (gltf.scene.getObjectByName(name) as THREE.Mesh).geometry;
+  const x = gltf.scene.userData as Record<string, number[] & number[][]>;
+  const v = (a: number[]) => new THREE.Vector3().fromArray(a);
+  santaModel = {
+    frame: geo('frame'),
+    front: geo('front'),
+    frontAxle: v(x.frontAxle),
+    rearAxle: v(x.rearAxle),
+    bb: v(x.bb),
+    grips: (x.grips as number[][]).map(v),
+    steerTop: v(x.steerTop),
+    steerBottom: v(x.steerBottom),
+  };
+}
+
+/** Model space → the bike's (BB at the origin, axles at the game's wheel-axle height). */
+function santaOffset(): THREE.Vector3 {
+  const s = santaModel!;
+  const axleY = SANTA_WHEEL_R - BB_HEIGHT;
+  return new THREE.Vector3(-s.bb.x, axleY - (s.frontAxle.y + s.rearAxle.y) / 2, -s.bb.z);
+}
+
+/** The Santa Claus bike: the model's frame and steering front end, with the game's wheels and cranks. */
+function buildSanta(bike: THREE.Group): THREE.Group {
+  const s = santaModel!;
+  const off = santaOffset();
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.15 });
+  const frame = new THREE.Mesh(s.frame, mat);
+  frame.position.copy(off);
+  frame.castShadow = true;
+  bike.add(frame);
+  bike.userData.forkTravel = 0; // (rigid: the model's suspension is one piece)
+  bike.userData.rearTravel = 0;
+  // The front end turns about the head tube's axis, through the lower crown
+  const pivot = s.steerBottom.clone().add(off);
+  const axis = s.steerTop.clone().sub(s.steerBottom).normalize();
+  bike.userData.forkAxis = axis;
+  const front = new THREE.Group();
+  front.name = 'front';
+  front.position.copy(pivot);
+  front.userData.axis = axis;
+  const fork = new THREE.Mesh(s.front, mat);
+  fork.position.copy(off).sub(pivot);
+  fork.castShadow = true;
+  front.add(fork);
+  const lowers = new THREE.Group();
+  lowers.name = 'lowers';
+  const fw = wheel(SANTA_WHEEL_R);
+  fw.name = 'frontWheel';
+  fw.position.copy(s.frontAxle).add(off).sub(pivot);
+  lowers.add(fw);
+  front.add(lowers);
+  bike.add(front);
+  const swing = new THREE.Group();
+  swing.name = 'swing';
+  const rw = wheel(SANTA_WHEEL_R);
+  rw.name = 'rearWheel';
+  rw.position.copy(s.rearAxle).add(off);
+  swing.add(rw);
+  bike.add(swing);
+  bike.add(cranksGroup());
+  return bike;
+}
+
+/** Cranks and chainring, turning at the BB (for the model bikes). */
+function cranksGroup(): THREE.Group {
+  const m = sharedMats;
+  const cranks = new THREE.Group();
+  cranks.name = 'cranks';
+  const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.008, 24), m.black);
+  ring.rotation.z = Math.PI / 2;
+  ring.position.x = 0.05;
+  cranks.add(ring);
+  for (const side of [-1, 1]) cranks.add(tube(new THREE.Vector3(side * 0.05, 0, 0), new THREE.Vector3(side * 0.07, side * 0.17, 0), 0.012, m.black));
+  return cranks;
+}
+
 /** Where the hands hold the bars (in half 0's frame): left and right grips. */
 export function gripsFor(d: BikeDesign): THREE.Vector3[] {
+  if (d.style === 'santa' && santaModel) {
+    const off = santaOffset();
+    return santaModel.grips.map((p) => {
+      const v = p.clone().add(off);
+      v.x *= 0.88; // (hands sit inside the bar ends)
+      v.x += PEDAL_X;
+      return v;
+    });
+  }
   if (d.style === 'mine' && frameModel) {
     // The model's own bar ends (pulled in a little: hands sit inside the ends)
     const m = frameTransform(d);
@@ -317,6 +436,7 @@ export function buildBike(d: BikeDesign = DEFAULT_DESIGN): THREE.Group {
   const bike = new THREE.Group();
   bike.userData.forkAxis = FORK_AXIS;
   if (d.style === 'mine' && frameModel) return buildMine(d, bike);
+  if (d.style === 'santa' && santaModel) return buildSanta(bike);
   const dh = d.style === 'downhill';
   bike.userData.forkTravel = dh ? FORK_TRAVEL_DH : FORK_TRAVEL;
   bike.userData.rearTravel = dh ? REAR_TRAVEL_ANGLE_DH : REAR_TRAVEL_ANGLE;
@@ -516,16 +636,8 @@ function buildMine(d: BikeDesign, bike: THREE.Group): THREE.Group {
   rw.position.copy(g.rearAxle);
   swing.add(rw);
   bike.add(swing);
-  // Cranks, turning at the BB
+  bike.add(cranksGroup());
   const m = sharedMats;
-  const cranks = new THREE.Group();
-  cranks.name = 'cranks';
-  const ring = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.008, 24), m.black);
-  ring.rotation.z = Math.PI / 2;
-  ring.position.x = 0.05;
-  cranks.add(ring);
-  for (const side of [-1, 1]) cranks.add(tube(new THREE.Vector3(side * 0.05, 0, 0), new THREE.Vector3(side * 0.07, side * 0.17, 0), 0.012, m.black));
-  bike.add(cranks);
   // A seat: a post up from the seat tube's top, and a saddle on it
   const seatTop = frameModel!.seat.clone().applyMatrix4(frameTransform(d));
   const postTop = seatTop.clone().add(new THREE.Vector3(0, 0.07, 0.015));

@@ -10,7 +10,7 @@
 
 import { MAP, MAPS, CUSTOM } from './terrain';
 import { loadMaps, newMap, deleteMap, MAP_BUILDER_ENABLED } from './customMaps';
-import { DESIGN_RANGES, DEFAULT_DESIGN, hasFrameModel } from './bikeModel';
+import { DESIGN_RANGES, DEFAULT_DESIGN, hasFrameModel, hasSantaModel } from './bikeModel';
 import * as progress from './progress';
 
 export type Page = 'main' | 'maps' | 'builder' | 'locker' | 'workshop' | 'store' | 'controls';
@@ -165,7 +165,10 @@ export class StartScreen {
     legal.className = 'legal';
     legal.innerHTML = `Jibnut © 2026 Frans Ljung · Free software under the
       <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener">GNU GPL v3 or later</a>
-      · <a href="https://github.com/Jibnutter/jibnut" target="_blank" rel="noopener">Source code</a>`;
+      · <a href="https://github.com/Jibnutter/jibnut" target="_blank" rel="noopener">Source code</a>
+      <br>Santa Claus bike: based on <a href="https://sketchfab.com/3d-models/santa-cruz-v10-downhill-mountain-bicycle-65e16e9785de4a019e35f599e47c9ee6" target="_blank" rel="noopener">“Santa Cruz V10 Downhill Mountain Bicycle”</a>
+      by <a href="https://sketchfab.com/fdgasd7" target="_blank" rel="noopener">Arsen Ismailov</a>,
+      <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a> (trimmed, logos removed, repainted)`;
     this.el.querySelector('.page.main')!.appendChild(legal);
     document.body.appendChild(this.el);
     this.buildWorkshop();
@@ -333,7 +336,7 @@ export class StartScreen {
     const choice = (key: string, options: [string, string][]) =>
       `<div class="choice-row">${options.map(([v, l]) => `<button type="button" class="opt" data-key="${key}" data-value="${v}">${l}</button>`).join('')}</div>`;
     box.innerHTML = `
-      <div class="field"><div class="field-name">Style</div>${choice('style', [['trail', 'Trail'], ['downhill', 'Downhill'], ...(hasFrameModel() ? [['mine', 'My frame'] as [string, string]] : [])])}</div>
+      <div class="field"><div class="field-name">Style</div>${choice('style', [['trail', 'Trail'], ['downhill', 'Downhill'], ...(hasFrameModel() ? [['mine', 'My frame'] as [string, string]] : []), ...(hasSantaModel() ? [['santa', 'Santa Claus'] as [string, string]] : [])])}</div>
       <div class="field"><div class="field-name">Frame colour</div>${swatches('frameColor', frameColors)}</div>
       <div class="field"><div class="field-name">Fork colour</div>${swatches('forkColor', forkColors)}</div>
       ${slider('headAngle', 'Head angle', deg)}

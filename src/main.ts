@@ -27,7 +27,7 @@ import { Powder } from './powder';
 import { Kickers } from './kickers';
 import { BuildMode } from './buildMode';
 import { Editor } from './editor';
-import { buildBike, animateBike, loadFrameModel, BB_HEIGHT } from './bikeModel';
+import { buildBike, animateBike, loadFrameModel, loadSantaModel, BB_HEIGHT } from './bikeModel';
 import { StartScreen } from './startScreen';
 import * as progress from './progress';
 import { Physics } from './physics';
@@ -67,7 +67,10 @@ scene.add(scenery.group);
 
 const physics = await Physics.create();
 // The Tinkercad bike frame ("My frame" in the workshop)
-await loadFrameModel().catch((e) => console.warn('Could not load the frame model', e));
+await Promise.all([
+  loadFrameModel().catch((e) => console.warn('Could not load the frame model', e)),
+  loadSantaModel().catch((e) => console.warn('Could not load the Santa Claus bike', e)),
+]);
 const skier = new Skier(physics);
 skier.reset(courseX(startZ), startZ);
 scene.add(skier.object); // hidden: the controller's posed target
