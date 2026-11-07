@@ -53,3 +53,28 @@ export class SkyDome {
     this.mesh.position.copy(camera.position);
   }
 }
+
+/**
+ * Lighting from the sky (image-based lighting): the sky rendered once into
+ * an environment map, which every standard material then uses for its
+ * ambient light (blue from above, brighter towards the sun) and its
+ * reflections (the helmet, goggles and jacket mirror the real sky).
+ * The clouds are left in: they soften it a little, as real ones do.
+ */
+export function skyEnvironment(renderer: THREE.WebGLRenderer): THREE.Texture {
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const scene = new THREE.Scene();
+  const sky = new SkyDome();
+  scene.add(sky.mesh);
+  // The snow below the horizon: bright, bluish bounced light from the ground
+  const ground = new THREE.Mesh(
+    new THREE.SphereGeometry(900, 32, 16, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: GROUND_BOUNCE, side: THREE.BackSide }),
+  );
+  scene.add(ground);
+  const env = pmrem.fromScene(scene, 0.02, 0.1, 2000).texture;
+  pmrem.dispose();
+  return env;
+}
+/** The light the snow bounces back up (linear colour). */
+const GROUND_BOUNCE = new THREE.Color(0.55, 0.6, 0.68);

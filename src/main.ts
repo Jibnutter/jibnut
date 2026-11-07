@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { SkyDome, SUN_DIRECTION } from './sky';
+import { SkyDome, SUN_DIRECTION, skyEnvironment } from './sky';
 
 const EXPOSURE = 0.6;
+const ENV_INTENSITY = 0.45;
 const FOG_COLOR = 0xbfd3e6; // the haze along the horizon
 import './style.css';
 import { Skier } from './skier';
@@ -31,6 +32,9 @@ const scene = new THREE.Scene();
 const sky = new SkyDome();
 scene.add(sky.mesh);
 scene.fog = new THREE.Fog(FOG_COLOR, 150, 1100);
+// Ambient light and reflections from the sky itself (see skyEnvironment)
+scene.environment = skyEnvironment(renderer);
+scene.environmentIntensity = ENV_INTENSITY;
 
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
 
@@ -58,9 +62,8 @@ const physicsDebug = new PhysicsDebug(physics);
 scene.add(physicsDebug.lines);
 
 // Lighting
-// Sky light from above (blue, from the sky) and bounced light from below,
-// plus the sun: warm, and much stronger (tone mapping brings it back down)
-scene.add(new THREE.HemisphereLight(0xcfe2ff, 0x8a96a8, 2.3));
+// The sun: warm, and strong (tone mapping brings it back down). The sky's
+// light comes from the environment map.
 const sun = new THREE.DirectionalLight(0xfff1df, 3.4);
 sun.castShadow = true;
 sun.target = skier.object; // keep the shadow area around the start
