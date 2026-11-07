@@ -70,7 +70,7 @@ export class Sunlight {
         if (this.done.has(m)) continue;
         this.done.add(m);
         const lit = m as THREE.MeshStandardMaterial;
-        if (lit.isMeshStandardMaterial || (m as THREE.MeshLambertMaterial).isMeshLambertMaterial || (m as THREE.MeshPhongMaterial).isMeshPhongMaterial) {
+        if (lit.isMeshStandardMaterial || (m as THREE.MeshLambertMaterial).isMeshLambertMaterial || (m as THREE.MeshPhongMaterial).isMeshPhongMaterial || (m as THREE.MeshToonMaterial).isMeshToonMaterial) {
           this.csm.setupMaterial(m);
           m.needsUpdate = true;
         }
