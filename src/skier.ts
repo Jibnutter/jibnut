@@ -76,7 +76,8 @@ const RAIL_CATCH_BELOW = 0.3; // m: landing this far below a rail's top still ca
 const BIKE_POSE = { hipHeight: 0.84, hipBack: 0.26, torsoPitch: 1.05 }; // (balanced: the mass right over the pedals)
 const BIKE_SKID_ANGLE = 0.7; // rad: the back wheel skids round this far
 const PEDAL_ACCEL = 3; // m/s² pedalling from a standstill ...
-const PEDAL_TOP_SPEED = 9; // ... fading out by this speed (m/s)
+const PEDAL_TOP_SPEED = 9;
+const BIKE_FLIP_RATE = 2.4; // rad/s of flip from a full yank back or throw forward // ... fading out by this speed (m/s)
 const BIKE_WHEEL_R = 0.37;
 const ROLL_OFF_SPIN = 0.35; // of the carve's turn kept when rolling off an edge (no pop)
 const MIN_GRIND = 0.25; // s: slides shorter than this don't get called out
@@ -1216,6 +1217,11 @@ export class Skier {
       const impulse = tmpImpulse.copy(push).multiplyScalar(this.mass.mass * pop);
       const side = tmpSideAxis.set(1, 0, 0).applyAxisAngle(UP, this.heading);
       this.flipMomentum = tmpTorque.crossVectors(r, impulse).dot(side);
+      // On the bike the weight shift can't move the mass much (hands on the
+      // bars, feet on the pedals): a rider flips a bike by yanking the bars
+      // back off the lip (S) or throwing it forward over it (W). That sets
+      // the flip, at up to BIKE_FLIP_RATE.
+      if (this.bike) this.flipMomentum = this.weight * this.mass.pitchInertia * BIKE_FLIP_RATE;
       // Spin: keep turning as fast as we were carving, plus the wind-up
       this.spinMomentum = this.mass.yawInertia * this.turnRate + this.windup * WIND_MOMENTUM;
       this.charge = 0;

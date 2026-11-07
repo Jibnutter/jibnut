@@ -149,6 +149,7 @@ export class StartScreen {
           <dt><kbd>A</kbd> / <kbd>D</kbd></dt><dd>Swing the skis across for a boardslide</dd>
           <dt class="group">On the mountain bike</dt><dd class="group"></dd>
           <dt><kbd>W</kbd></dt><dd>Pedal</dd>
+          <dt>Space + <kbd>S</kbd> / <kbd>W</kbd></dt><dd>Backflip / frontflip: yank the bars back, or throw the bike forward, off the lip</dd>
           <dt><kbd>Space</kbd> / <kbd>Right Shift</kbd></dt><dd>In the air: no-hander / tabletop</dd>
           <dt class="group">Anytime</dt><dd class="group"></dd>
           <dt><kbd>C</kbd></dt><dd>First / third person</dd>
