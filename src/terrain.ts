@@ -515,17 +515,49 @@ function benchRise(t: number): number {
   return t < a ? (k * t * t) / (2 * a) : k * (a / 2 + (t - a));
 }
 
-/** Terrain height at world (x, z). Physics, meshes and colliders all use this. */
-export function heightAt(x: number, z: number): number {
-  // Work in course coordinates: u across the course from its centreline,
-  // s along it. Where the course bends, measuring s along its direction
-  // (not straight down z) turns the contours with it, so the fall line
-  // follows the bend instead of running off into the berm.
+// Course coordinates of the last point given to courseCoords (module
+// scratch: heightAt runs constantly, so nothing is allocated)
+let cs = 0;
+let cu = 0;
+
+/**
+ * Course coordinates of world (x, z): u across the course from its
+ * centreline, s along it. Where the course bends, measuring s along its
+ * direction (not straight down z) turns the contours with it, so the fall
+ * line follows the bend instead of running off into the berm.
+ */
+function courseCoords(x: number, z: number): void {
   const s0 = -z;
   const slope = lookup(centreSlope, s0);
   const offset = x - lookup(centreX, s0);
-  const s = s0 + offset * slope;
-  const u = offset / Math.sqrt(1 + slope * slope); // distance across, square to the course (+ = right)
+  cs = s0 + offset * slope;
+  cu = offset / Math.sqrt(1 + slope * slope); // distance across, square to the course (+ = right)
+}
+
+/**
+ * How much (x, z) belongs to a built snow feature (a tabletop jump or the
+ * kicker), 0 to 1: their steep sides are packed snow, never bare rock.
+ */
+function builtAt(x: number, z: number): number {
+  courseCoords(x, z);
+  const ax = Math.abs(cu);
+  const margin = 2; // m beyond the feature's foot, so the blend stays off it
+  let built = 0;
+  const hw = lookup(halfWidth, cs);
+  if (hw > 0) built = 1 - THREE.MathUtils.smoothstep(ax, hw + JUMP_SIDE, hw + JUMP_SIDE + margin);
+  if (M.kicker) {
+    const k = M.kicker;
+    const d = cs - tags[k.tag];
+    if (d > -k.length - margin && d < 0.5 + margin) built = Math.max(built, 1 - THREE.MathUtils.smoothstep(ax, k.halfWidth + 1.5, k.halfWidth + 1.5 + margin));
+  }
+  return built;
+}
+
+/** Terrain height at world (x, z). Physics, meshes and colliders all use this. */
+export function heightAt(x: number, z: number): number {
+  courseCoords(x, z);
+  const s = cs;
+  const u = cu;
   const ax = Math.abs(u);
   const side = lookup(sideH, s) + features(s, u, x, z);
 
@@ -801,14 +833,18 @@ function powderGeometry(geo: THREE.BufferGeometry): THREE.BufferGeometry {
   }
   out.computeVertexNormals();
   // Snow won't stick to steep faces: cliffs show bare dark rock, blending
-  // through snow-dusted rock on the slightly gentler edges
+  // through snow-dusted rock on the slightly gentler edges. Not on built
+  // features, though: a tabletop's sides are as steep as a cliff's but are
+  // packed snow (as rock, on the side away from the sun, they read as black
+  // smears, blurred wide by the vertex colours blending across the mesh)
   const nrm = out.attributes.normal as THREE.BufferAttribute;
   const color = new Float32Array(pos.count * 3);
   const snow = new THREE.Color(0xffffff);
   const rock = new THREE.Color(0x4a4744).convertSRGBToLinear();
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
-    const bare = THREE.MathUtils.smoothstep(1 - nrm.getY(i), 0.42, 0.62); // ~55° to ~68°
+    const steep = THREE.MathUtils.smoothstep(1 - nrm.getY(i), 0.42, 0.62); // ~55° to ~68°
+    const bare = steep > 0 ? steep * (1 - builtAt(pos.getX(i), pos.getZ(i))) : 0;
     c.lerpColors(snow, rock, bare);
     // Baked sky visibility: hollows and the feet of walls see less sky
     c.multiplyScalar(skyVisibility(pos.getX(i), pos.getZ(i)));
