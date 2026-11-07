@@ -55,6 +55,22 @@ export class Physics {
    * overlap test never reports a hit, so the body would pass straight
    * through the snow.)
    */
+  /** After the terrain changed (the map builder): build the course's collider again. */
+  rebuildCourse(): void {
+    const old = this.terrain.shift();
+    if (old) this.world.removeCollider(old, false);
+    const { course } = terrainGeometry();
+    this.terrain.unshift(this.trimesh(course));
+  }
+
+  private trimesh(geo: THREE.BufferGeometry): RAPIER.Collider {
+    const vertices = new Float32Array(geo.attributes.position.array as Float32Array);
+    const indices = geo.index!.array as Uint32Array;
+    return this.world.createCollider(
+      RAPIER.ColliderDesc.trimesh(vertices, indices, RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES).setFriction(0.5),
+    );
+  }
+
   private addTerrain(): void {
     const { course, outer } = terrainGeometry();
     for (const geo of [course, outer]) {

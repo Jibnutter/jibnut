@@ -166,7 +166,7 @@ export class BuildMode {
 }
 
 /** The ghost's shape: the kicker's ramp over the ground as it is now, a little above it. */
-function kickerGhost(x: number, z: number, yaw: number): THREE.BufferGeometry {
+export function kickerGhost(x: number, z: number, yaw: number): THREE.BufferGeometry {
   // (kickerGeometry samples the ground, which doesn't have this kicker yet:
   // add its shape on top)
   const geo = kickerGeometry({ x, z, yaw }, 0.06);

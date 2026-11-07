@@ -8,10 +8,11 @@
 // any later version. It is distributed WITHOUT ANY WARRANTY; see the LICENSE
 // file for details.
 
-import { MAP, MAPS } from './terrain';
+import { MAP, MAPS, CUSTOM } from './terrain';
+import { loadMaps, newMap, deleteMap } from './customMaps';
 import * as progress from './progress';
 
-export type Page = 'main' | 'maps' | 'locker' | 'store' | 'controls';
+export type Page = 'main' | 'maps' | 'builder' | 'locker' | 'store' | 'controls';
 
 /**
  * The menu, over the live 3D scene (the camera circles the first jump while
@@ -44,6 +45,7 @@ export class StartScreen {
         <div class="nuts" title="Nuts: earned by finishing runs (half your score)"><span class="nut-icon" aria-hidden="true"></span><span class="nut-count">0</span> Nuts</div>
         <nav class="menu">
           <button type="button" data-go="maps">Maps</button>
+          <button type="button" data-go="builder">Map builder</button>
           <button type="button" data-go="locker">Locker</button>
           <button type="button" data-go="store">Store</button>
           <button type="button" data-go="controls">Controls</button>
@@ -64,6 +66,18 @@ export class StartScreen {
             </article>`,
           ).join('')}
         </div>
+        <button type="button" class="back" data-go="main">Back</button>
+      </section>
+
+      <section class="page builder">
+        <div class="crumb">Jibnut</div>
+        <h2>Map builder</h2>
+        <form class="new-map">
+          <input type="text" maxlength="24" placeholder="Name your map" spellcheck="false" aria-label="Map name">
+          <button type="submit" class="play">Create</button>
+        </form>
+        <div class="my-maps"></div>
+        <p class="store-help">Shape the snow, place lips and trees, set where the run starts. Maps are saved in this browser.</p>
         <button type="button" class="back" data-go="main">Back</button>
       </section>
 
@@ -150,12 +164,32 @@ export class StartScreen {
         progress.buy(progress.STORE.find((i) => i.id === button.dataset.buy)!);
       } else if (button.dataset.wear) {
         progress.wear(progress.ALL.find((i) => i.id === button.dataset.wear)!);
+      } else if (button.dataset.edit) {
+        location.search = `?map=${button.dataset.edit}&edit=1`;
+      } else if (button.dataset.ride) {
+        location.search = `?map=${button.dataset.ride}&play=1`;
+      } else if (button.dataset.del) {
+        const map = loadMaps().find((m) => m.id === button.dataset.del);
+        if (map && confirm(`Delete "${map.name}"? This can't be undone.`)) {
+          deleteMap(map.id);
+          // (if it's the map that's loaded, go back to the first one)
+          if (map.id === MAP.id) location.search = '';
+          else this.renderMyMaps();
+        }
       } else if (button.dataset.setting === 'crashes') this.setCrashes(!this.crashes);
       else if (button.dataset.go) this.go(button.dataset.go as Page);
       else if (button.dataset.map) this.start(Number(button.dataset.map));
     });
+    this.el.querySelector<HTMLFormElement>('.new-map')!.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const input = this.el.querySelector<HTMLInputElement>('.new-map input')!;
+      const map = newMap(input.value);
+      location.search = `?map=${map.id}&edit=1`;
+    });
+    this.renderMyMaps();
     window.addEventListener('keydown', (e) => {
       if (!this.visible) return;
+      if ((e.target as HTMLElement | null)?.tagName === 'INPUT' && e.code !== 'Escape') return; // (typing)
       if (e.code === 'Escape' && this.page !== 'main') {
         e.preventDefault();
         this.go('main');
@@ -263,6 +297,38 @@ export class StartScreen {
       history.replaceState(null, '', `${location.pathname}?${params}`);
       this.start(MAPS.findIndex((m) => m.id === MAP.id));
     }
+  }
+
+  /** Your maps in the builder: ride, edit or delete each. */
+  private renderMyMaps(): void {
+    const maps = loadMaps().sort((a, b) => b.updated - a.updated);
+    const esc = (t: string) => t.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+    this.el.querySelector('.my-maps')!.innerHTML = maps.length
+      ? maps
+          .map(
+            (m) => `
+        <article class="my-map">
+          <h3>${esc(m.name)}</h3>
+          <div class="my-map-buttons">
+            <button type="button" class="play" data-ride="${m.id}">Ride</button>
+            <button type="button" data-edit="${m.id}">Edit</button>
+            <button type="button" class="del" data-del="${m.id}" aria-label="Delete ${esc(m.name)}">Delete</button>
+          </div>
+        </article>`,
+          )
+          .join('')
+      : '<p class="store-help">No maps yet: name one and create it.</p>';
+  }
+
+  /** Called when arriving to edit a map (?edit=1). */
+  whenEditing(fn: () => void): void {
+    const params = new URLSearchParams(location.search);
+    if (!params.get('edit') || !CUSTOM) return;
+    params.delete('edit');
+    history.replaceState(null, '', `${location.pathname}?${params}`);
+    this.el.classList.add('hidden');
+    (document.activeElement as HTMLElement | null)?.blur();
+    fn();
   }
 
   /** Called whenever the menu changes page (the locker shows the rider). */

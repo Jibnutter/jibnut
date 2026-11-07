@@ -10,6 +10,7 @@
 
 import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
+import { loadMaps, decodeSculpt, SCULPT, GRID_W, GRID_H, type CustomMap } from './customMaps';
 
 /**
  * The maps. Each is one mountain the course runs down, along -Z
@@ -245,15 +246,66 @@ const BACKCOUNTRY: MapDef = {
 };
 
 /** Every map, in menu order. */
-export const MAPS: MapInfo[] = [JUMPLINE, BACKCOUNTRY].map(({ id, name, description, features }) => ({
-  id,
-  name,
-  description,
-  features,
-}));
+/**
+ * A map made in the map builder: a plain, even slope with a flat start at
+ * the top and a run-out and braking zone at the bottom, wide open across.
+ * Everything else (the shape, lips, trees, spawn) the player adds.
+ */
+function customDef(map: CustomMap): MapDef {
+  return {
+    id: map.id,
+    name: map.name,
+    description: 'A map you built.',
+    features: ['Your own map'],
+    sMin: -SCULPT.topZ,
+    startAngle: 0,
+    program: [
+      [10, 0],
+      [16, 0, 'deck-end'], // (the start: at z = 0)
+      [10, -20],
+      [520, -21],
+      [50, -6],
+      [20, 0, 'finish'],
+      [30, 0],
+      [10, 10, 'brake'],
+      [22, 10, 'end'],
+      [10, 18],
+      [40, 18],
+    ],
+    tabletops: [],
+    bends: () => [[-SCULPT.topZ, 0]],
+    courseHalf: 20,
+    bermStart: 200, // (no berms: open across the whole editable area)
+    bermTop: 220,
+    bermHeight: 0,
+    edgeLimit: SCULPT.halfX - 6,
+    meshHalf: SCULPT.halfX,
+    meshCell: SCULPT.cell,
+    wild: { amount: 0, from: 'deck-end' },
+    cliffs: [],
+    park: false,
+    bounce: 0.6,
+    snowDrag: 0.05,
+    showcase: { tag: 'deck-end', x: 0 },
+  };
+}
+
+const CUSTOM_MAPS = loadMaps();
+
+export const MAPS: MapInfo[] = [JUMPLINE, BACKCOUNTRY, ...CUSTOM_MAPS.map(customDef)].map(
+  ({ id, name, description, features }) => ({ id, name, description, features }),
+);
+
+/** The custom map this page load runs, if it's one (else null). */
+export const CUSTOM: CustomMap | null = (() => {
+  const loc = (globalThis as { location?: { search: string } }).location;
+  const id = loc ? new URLSearchParams(loc.search).get('map') : null;
+  return CUSTOM_MAPS.find((m) => m.id === id) ?? null;
+})();
 
 /** The map this page load runs (?map=<id>; Jumpline if none). */
 const M: MapDef = (() => {
+  if (CUSTOM) return customDef(CUSTOM);
   const loc = (globalThis as { location?: { search: string } }).location;
   const id = loc ? new URLSearchParams(loc.search).get('map') : null;
   return [JUMPLINE, BACKCOUNTRY].find((m) => m.id === id) ?? JUMPLINE;
@@ -272,6 +324,8 @@ const BERM_TOP = M.bermTop;
 const BERM_HEIGHT = M.bermHeight;
 /** Riders are kept this close to the centreline (between the berms in the park). */
 export const EDGE_LIMIT = M.edgeLimit;
+/** Where riders start: a custom map's spawn point (x, z, facing), else the top of the course. */
+export const SPAWN = CUSTOM ? { ...CUSTOM.spawn } : null;
 
 const S_MIN = M.sMin;
 const START_ANGLE = M.startAngle;
@@ -596,8 +650,8 @@ export function kickerHeightFor(k: PlacedKicker): number {
   const h = ((Math.tan(KICKER.lipAngle) + groundDrop) * KICKER.length) / 2;
   return THREE.MathUtils.clamp(h, KICKER.minHeight, KICKER.maxHeight);
 }
-/** Placed kickers can only go on maps without a park (the backcountry). */
-export const CAN_BUILD = !M.park;
+/** Placed kickers (M) can only go on maps without a park: the backcountry. */
+export const CAN_BUILD = !M.park && !CUSTOM; // (custom maps have the map builder instead)
 
 /**
  * How far along a placed kicker's ramp (x, z) is: 0 at its foot, 1 at the
@@ -638,8 +692,34 @@ export function onPlacedKicker(x: number, z: number): boolean {
   return false;
 }
 
-/** The ground without placed kickers: the map's own shape. */
+/** The ground without placed kickers: the map's own shape (and, on a custom map, its sculpting). */
 export function groundHeight(x: number, z: number): number {
+  return CUSTOM ? baseHeight(x, z) + sculptAt(x, z) : baseHeight(x, z);
+}
+
+// ---------------------------------------------------------------------------
+// Sculpting (custom maps): metres added to the slope, on a grid, blended.
+
+/** The sculpt grid (row by row from the top), or empty on the built-in maps. */
+export const SCULPT_GRID: Float32Array = CUSTOM ? decodeSculpt(CUSTOM.sculpt) : new Float32Array(0);
+
+function sculptAt(x: number, z: number): number {
+  const fx = (x + SCULPT.halfX) / SCULPT.cell;
+  const fz = (SCULPT.topZ - z) / SCULPT.cell;
+  if (fx < 0 || fz < 0 || fx > GRID_W - 1 || fz > GRID_H - 1) return 0;
+  const ix = Math.min(GRID_W - 2, Math.floor(fx));
+  const iz = Math.min(GRID_H - 2, Math.floor(fz));
+  const tx = fx - ix;
+  const tz = fz - iz;
+  const g = SCULPT_GRID;
+  const i = iz * GRID_W + ix;
+  const a = g[i] * (1 - tx) + g[i + 1] * tx;
+  const b = g[i + GRID_W] * (1 - tx) + g[i + GRID_W + 1] * tx;
+  return a * (1 - tz) + b * tz;
+}
+
+/** The map's own shape, before any sculpting. */
+function baseHeight(x: number, z: number): number {
   courseCoords(x, z);
   const s = cs;
   const u = cu;
@@ -922,21 +1002,78 @@ function powderGeometry(geo: THREE.BufferGeometry): THREE.BufferGeometry {
   // features, though: a tabletop's sides are as steep as a cliff's but are
   // packed snow (as rock, on the side away from the sun, they read as black
   // smears, blurred wide by the vertex colours blending across the mesh)
-  const nrm = out.attributes.normal as THREE.BufferAttribute;
-  const color = new Float32Array(pos.count * 3);
-  const snow = new THREE.Color(0xffffff);
-  const rock = new THREE.Color(0x4a4744).convertSRGBToLinear();
-  const c = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    const steep = THREE.MathUtils.smoothstep(1 - nrm.getY(i), 0.42, 0.62); // ~55° to ~68°
-    const bare = steep > 0 ? steep * (1 - builtAt(pos.getX(i), pos.getZ(i))) : 0;
-    c.lerpColors(snow, rock, bare);
-    // Baked sky visibility: hollows and the feet of walls see less sky
-    c.multiplyScalar(skyVisibility(pos.getX(i), pos.getZ(i)));
-    c.toArray(color, i * 3);
-  }
-  out.setAttribute('color', new THREE.BufferAttribute(color, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(new Float32Array(pos.count * 3), 3));
+  for (let i = 0; i < pos.count; i++) vertexColor(out, i);
   return out;
+}
+
+const SNOW_WHITE = new THREE.Color(0xffffff);
+const ROCK = new THREE.Color(0x4a4744).convertSRGBToLinear();
+const tmpColor = new THREE.Color();
+/** A terrain vertex's colour: snow or bare rock, darkened by baked sky visibility. */
+function vertexColor(geo: THREE.BufferGeometry, i: number): void {
+  const pos = geo.attributes.position as THREE.BufferAttribute;
+  const nrm = geo.attributes.normal as THREE.BufferAttribute;
+  const steep = THREE.MathUtils.smoothstep(1 - nrm.getY(i), 0.42, 0.62); // ~55° to ~68°
+  const bare = steep > 0 ? steep * (1 - builtAt(pos.getX(i), pos.getZ(i))) : 0;
+  tmpColor.lerpColors(SNOW_WHITE, ROCK, bare);
+  // Baked sky visibility: hollows and the feet of walls see less sky
+  tmpColor.multiplyScalar(skyVisibility(pos.getX(i), pos.getZ(i)));
+  (geo.attributes.color as THREE.BufferAttribute).setXYZ(i, tmpColor.r, tmpColor.g, tmpColor.b);
+}
+
+/** The visible course mesh (custom maps edit it live). */
+let coursePowder: THREE.BufferGeometry | null = null;
+
+/**
+ * After sculpting: bring the terrain meshes up to date over a region
+ * (world x0..x1, z0..z1). Quick (heights and shading) while a brush is
+ * moving; with colours, also the rock and baked sky visibility (slower:
+ * after a stroke).
+ */
+export function refreshTerrain(x0: number, z0: number, x1: number, z1: number, colours: boolean): void {
+  const ride = terrainGeometry().course;
+  const look = coursePowder;
+  const rp = ride.attributes.position as THREE.BufferAttribute;
+  for (let i = 0; i < rp.count; i++) {
+    const x = rp.getX(i);
+    const z = rp.getZ(i);
+    if (x < x0 || x > x1 || z < z0 || z > z1) continue;
+    rp.setY(i, heightAt(x, z));
+    if (look) (look.attributes.position as THREE.BufferAttribute).setY(i, powderAt(x, z));
+  }
+  rp.needsUpdate = true;
+  ride.computeBoundingSphere();
+  if (!look) return;
+  look.attributes.position.needsUpdate = true;
+  look.computeVertexNormals();
+  if (colours) {
+    // Sky visibility looks up to ~36 m away: redo it that far around
+    const reach = 38;
+    for (let ix = Math.floor((x0 - reach) / AO_CELL); ix <= Math.ceil((x1 + reach) / AO_CELL); ix++) {
+      for (let iz = Math.floor((z0 - reach) / AO_CELL); iz <= Math.ceil((z1 + reach) / AO_CELL); iz++) {
+        aoCache.delete(ix * 100003 + iz);
+      }
+    }
+    const lp = look.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < lp.count; i++) {
+      const x = lp.getX(i);
+      const z = lp.getZ(i);
+      if (x < x0 - reach || x > x1 + reach || z < z0 - reach || z > z1 + reach) continue;
+      vertexColor(look, i);
+    }
+  } else {
+    // (rock follows the new steepness at once; the sky visibility after the stroke)
+    const lp = look.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < lp.count; i++) {
+      const x = lp.getX(i);
+      const z = lp.getZ(i);
+      if (x < x0 || x > x1 || z < z0 || z > z1) continue;
+      vertexColor(look, i);
+    }
+  }
+  look.attributes.color.needsUpdate = true;
+  look.computeBoundingSphere();
 }
 
 export function createTerrain(): THREE.Group {
@@ -946,6 +1083,8 @@ export function createTerrain(): THREE.Group {
   // (Jumpline is groomed: corduroy; its powder landing shows as lumpy snow)
   const powder = new THREE.MeshStandardMaterial({ map: snowTexture(!!M.powderOnly), roughness: 0.9, vertexColors: true });
   const courseMesh = new THREE.Mesh(powderGeometry(course), powder);
+  coursePowder = courseMesh.geometry;
+  courseMesh.frustumCulled = !CUSTOM; // (edited live: its bounds change)
   const outerMesh = new THREE.Mesh(powderGeometry(outer), powder);
   for (const m of [courseMesh, outerMesh]) {
     m.receiveShadow = true;

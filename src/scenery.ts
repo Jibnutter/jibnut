@@ -24,6 +24,7 @@ import {
   MOUNTAIN_BOTTOM_Z,
   EDGE_LIMIT,
   IS_PARK,
+  CUSTOM,
 } from './terrain';
 
 /**
@@ -318,8 +319,12 @@ export class Scenery {
   readonly group = new THREE.Group();
   private readonly lift: Chairlift | null = IS_PARK ? new Chairlift() : null;
 
+  /** The forest (on a custom map: the trees placed in the builder). */
+  private forest: THREE.Group;
+
   constructor() {
-    this.group.add(createTrees());
+    this.forest = CUSTOM ? createForest(CUSTOM.trees.map((t) => new THREE.Vector3(t.x, heightAt(t.x, t.z), t.z))) : createTrees();
+    this.group.add(this.forest);
     // The backcountry is just the mountain and its trees, and a finish
     // arch down in the valley
     if (!this.lift) {
@@ -340,6 +345,14 @@ export class Scenery {
       for (let z = FINISH_Z; z >= END_Z - 6; z -= 2) along.push([side * (COURSE_HALF + 1), z]);
       this.group.add(fence(along));
     }
+  }
+
+  /** Replace the trees (the map builder). */
+  setTrees(spots: { x: number; z: number }[]): void {
+    this.forest.removeFromParent();
+    this.forest.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+    this.forest = createForest(spots.map((t) => new THREE.Vector3(t.x, heightAt(t.x, t.z), t.z)));
+    this.group.add(this.forest);
   }
 
   update(dt: number): void {

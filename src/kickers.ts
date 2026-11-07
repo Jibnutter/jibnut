@@ -87,6 +87,31 @@ export class Kickers {
     }
   }
 
+  /** Remove the kicker nearest (x, z), if one is within reach. True if one went. */
+  removeNear(x: number, z: number, reach: number): boolean {
+    let best = -1;
+    let bestD = reach;
+    this.list.forEach((k, i) => {
+      const d = Math.hypot(k.x - x, k.z - z);
+      if (d < bestD) {
+        bestD = d;
+        best = i;
+      }
+    });
+    if (best < 0) return false;
+    this.list.splice(best, 1);
+    setPlacedKickers(this.list);
+    this.rebuild();
+    this.save();
+    return true;
+  }
+
+  /** The ground under them changed (sculpting): rebuild them on it. */
+  refresh(): void {
+    setPlacedKickers(this.list);
+    this.rebuild();
+  }
+
   private rebuild(): void {
     for (const m of this.meshes) {
       m.removeFromParent();

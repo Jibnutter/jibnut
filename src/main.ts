@@ -20,12 +20,13 @@ import './style.css';
 import { Skier } from './skier';
 import { ChaseCamera } from './chaseCamera';
 import { readControls } from './input';
-import { createTerrain, MAP, SHOWCASE, CAN_BUILD, heightAt, courseX, START_Z, FINISH_Z, END_Z, DECK_END_Z } from './terrain';
+import { createTerrain, MAP, SHOWCASE, CAN_BUILD, SPAWN, CUSTOM, heightAt, courseX, START_Z, FINISH_Z, END_Z, DECK_END_Z } from './terrain';
 import { Scenery } from './scenery';
 import { createRails } from './rails';
 import { Powder } from './powder';
 import { Kickers } from './kickers';
 import { BuildMode } from './buildMode';
+import { Editor } from './editor';
 import { StartScreen } from './startScreen';
 import * as progress from './progress';
 import { Physics } from './physics';
@@ -141,7 +142,11 @@ skier.onLand = (message, clean, points) => {
 const powerEl = hud.querySelector<HTMLDivElement>('.fill')!;
 
 function restart(): void {
-  skier.reset(courseX(startZ), startZ);
+  if (SPAWN) {
+    // A custom map: from its spawn point, facing the way it says
+    skier.reset(SPAWN.x, SPAWN.z);
+    skier.heading = SPAWN.yaw;
+  } else skier.reset(courseX(startZ), startZ);
   setScore(0); // a fresh run
   crossed = false;
   powder.clear(); // fresh snow for the new run
@@ -156,6 +161,33 @@ buildEl.id = 'build';
 buildEl.className = 'hidden';
 document.body.appendChild(buildEl);
 building.onStatus = (text) => (buildEl.textContent = text);
+
+// The map builder (custom maps): editing, with Tab to test ride and back
+const editor = CUSTOM ? new Editor(camera, renderer.domElement, scene, physics, kickers, scenery) : null;
+function startEditing(): void {
+  if (!editor) return;
+  playing = true;
+  hud.classList.add('hidden');
+  trickEl.className = '';
+  if (chase.firstPerson) {
+    chase.toggle();
+    sunlight.updateFrustums();
+    goggleTint.classList.remove('on');
+  }
+  restart(); // the rider waits at the spawn point
+  skier.view.visible = true;
+  editor.enter();
+}
+function testRide(): void {
+  if (!editor) return;
+  editor.exit();
+  hud.classList.remove('hidden');
+  restart();
+}
+if (editor) {
+  editor.onTestRide = testRide;
+  editor.onSpawn = restart;
+}
 
 // Start screen: up first; Esc brings it back
 const startScreen = new StartScreen();
@@ -181,6 +213,7 @@ startScreen.whenStarted(() => {
   hud.classList.remove('hidden');
   restart();
 });
+startScreen.whenEditing(startEditing);
 let menuAngle = 0; // the camera circles the rider while the menu is up
 
 // The locker shows the rider, standing at the top in what they're wearing
@@ -210,10 +243,20 @@ window.addEventListener('keydown', (e) => {
       building.exit();
       buildEl.classList.add('hidden');
     }
+    editor?.exit();
     startScreen.show();
     return;
   }
   if (!playing) return; // the game's keys only work in the game
+  if ((e.target as HTMLElement | null)?.tagName === 'INPUT') return; // (typing a name)
+  if (e.code === 'Tab' && editor) {
+    // The map builder: test ride, and back to editing
+    e.preventDefault();
+    if (editor.active) testRide();
+    else startEditing();
+    return;
+  }
+  if (editor?.active) return; // (the editor has its own keys)
   if (e.code === 'KeyM' && CAN_BUILD) {
     // Build mode on or off (the backcountry only)
     if (building.active) {
@@ -261,7 +304,11 @@ renderer.setAnimationLoop((time) => {
   const dt = Math.min(timer.getDelta(), 0.05); // avoid huge steps after a tab switch
 
   scenery.update(dt);
-  if (playing && building.active) {
+  if (playing && editor?.active) {
+    // Map builder: the rider stands at the spawn point; the camera flies
+    editor.update(dt);
+    skier.preview(dt);
+  } else if (playing && building.active) {
     // Build mode: the rider waits; the camera flies (see BuildMode)
     building.update(dt);
   } else if (playing) {
