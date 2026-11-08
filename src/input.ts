@@ -14,7 +14,9 @@ const down = new Set<string>();
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') e.preventDefault(); // don't scroll or click buttons
   down.add(e.code);
+  if (e.isTrusted) setPadMode(false); // (a real key: not one the pad pressed for us)
 });
+window.addEventListener('pointerdown', () => setPadMode(false));
 window.addEventListener('keyup', (e) => down.delete(e.code));
 window.addEventListener('blur', () => down.clear()); // don't get stuck turning
 
@@ -87,6 +89,35 @@ export function rumble(strength: number, ms: number): void {
   pad?.vibrationActuator?.playEffect?.('dual-rumble', { duration: ms, strongMagnitude: strength, weakMagnitude: Math.min(1, strength * 1.3) })?.catch(() => {});
 }
 
+// Controller mode: a controller icon in the top right corner while the pad
+// is what you're using (its last input came from the pad; a key or a click
+// switches back).
+const PAD_ICON = `<svg viewBox="0 0 64 40" width="44" height="28" aria-hidden="true">
+  <path d="M18 4h28c8 0 13 5 15 13l2 11c1 6-2 10-7 10-3 0-5-2-7-5l-3-4H18l-3 4c-2 3-4 5-7 5-5 0-8-4-7-10l2-11C5 9 10 4 18 4z"
+    fill="rgba(0,0,0,0.35)" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M15 17v8M11 21h8" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+  <circle cx="45" cy="17" r="2.2" fill="currentColor"/><circle cx="50" cy="21" r="2.2" fill="currentColor"/>
+  <circle cx="45" cy="25" r="2.2" fill="currentColor"/><circle cx="40" cy="21" r="2.2" fill="currentColor"/>
+</svg>`;
+let padMode = false;
+let padIcon: HTMLElement | null = null;
+function setPadMode(on: boolean): void {
+  if (on === padMode) return;
+  padMode = on;
+  if (!padIcon) {
+    padIcon = document.createElement('div');
+    padIcon.id = 'pad-mode';
+    padIcon.title = 'Controller';
+    padIcon.innerHTML = PAD_ICON;
+    document.body.appendChild(padIcon);
+  }
+  padIcon.classList.toggle('on', on);
+}
+/** Whether the controller is what's being used. */
+export function usingPad(): boolean {
+  return padMode;
+}
+
 /** As if a key was pressed (the game's own key handlers do the rest). */
 function press(code: string): void {
   window.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
@@ -100,6 +131,7 @@ function press(code: string): void {
 export function pollGamepad(menu: HTMLElement | null): void {
   const pad = activePad();
   if (!pad) {
+    setPadMode(false); // (unplugged, or switched off)
     padState.steer = 0;
     padState.tuck = padState.brake = padState.jump = padState.shifty = false;
     return;
@@ -110,6 +142,8 @@ export function pollGamepad(menu: HTMLElement | null): void {
   const dz = (v: number) => (Math.abs(v) < DEAD ? 0 : Math.sign(v) * ((Math.abs(v) - DEAD) / (1 - DEAD)));
   const sx = dz(pad.axes[0] ?? 0);
   const sy = dz(pad.axes[1] ?? 0); // (+ = down)
+  // Any button, trigger or stick: the pad is in use
+  if (pad.buttons.some((b) => b.pressed || b.value > 0.3) || pad.axes.some((a) => Math.abs(a) > 0.5)) setPadMode(true);
 
   if (menu) {
     padState.steer = 0;
