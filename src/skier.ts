@@ -9,7 +9,7 @@
 // file for details.
 
 import * as THREE from 'three';
-import { heightAt, normalAt, courseX, EDGE_LIMIT, MAX_Z, MAP_BOUNCE, SNOW_DRAG, JUMPS, onPlacedKicker } from './terrain';
+import { heightAt, normalAt, courseX, EDGE_LIMIT, MAX_Z, MAP_BOUNCE, SNOW_DRAG, JUMPS, onPlacedKicker, onAirbag, stepAirbag, pressAirbag, hitAirbag, resetAirbag } from './terrain';
 import type { Controls } from './input';
 import { RAPIER, type Physics } from './physics';
 import { Ragdoll } from './ragdoll';
@@ -84,6 +84,35 @@ const MIN_GRIND = 0.25; // s: slides shorter than this don't get called out
 // Grabs (hold Space in the air)
 const MIN_GRAB = 0.25; // s held for the grab to count
 const GRAB_HELD = 0.8; // the pose this far into the grab counts as holding it
+/**
+ * The bike's whip (Right Shift in the air), a laid-out one: thrown out fast
+ * (the tail kicks first, the bike lays over just behind it, so it swings out
+ * in an arc, a touch past flat), hung there with a slow sway, then rolled
+ * back upright smoothly and a little slower, with no bounce, ready to land.
+ * Springs: out is quick and lively, back is slow and well damped.
+ */
+const WHIP_SPRING = {
+  out: { yaw: { omega: 13, zeta: 0.6 }, lay: { omega: 9.5, zeta: 0.55 } },
+  back: { yaw: { omega: 7.5, zeta: 0.95 }, lay: { omega: 6, zeta: 0.9 } },
+  sway: 0.05, // how far the held whip sways (of a full lay)
+  swayRate: 3.5, // rad/s
+};
+/**
+ * The body in a full whip (added to the pose, scaled by how far it's laid):
+ * thrown over sideways away from the wheels, folded low and forward over the
+ * bike, legs pulled up so the bike comes up under the hips; shoulders turned
+ * only a little against the tail.
+ */
+const WHIP_BODY = { lean: 0.5, torsoPitch: 0.5, hipHeight: -0.14, hipBack: -0.04, counter: 0.2 };
+/** One step of a damped spring towards target (in small slices: stable at any frame time). */
+function springStep(s: { x: number; v: number }, target: number, omega: number, zeta: number, dt: number): void {
+  const n = Math.max(1, Math.ceil(dt / 0.004));
+  const h = dt / n;
+  for (let k = 0; k < n; k++) {
+    s.v += (omega * omega * (target - s.x) - 2 * zeta * omega * s.v) * h;
+    s.x += s.v * h;
+  }
+}
 const GRAB_LAND_MAX = 0.5; // land still this far into the grab (skis crossed) and you fall
 const RAIL_TURN_RATE = 4.5; // rad/s: on a rail the skis swing round freely (no edges to carve)
 const WALL_CRASH_SPEED = 4; // m/s: hit a kicker's side faster than this and you fall
@@ -141,6 +170,17 @@ const SIDE_TILT_BEYOND = 0.35;
 // Hard landings: speed into the slope above this squashes the body right
 // down and then bounces it back up into a hop (for fun, not realism)
 const HARD_LANDING = 8; // m/s
+/**
+ * The airbag (Summer Dirt's big line): any landing on it is fine. It soaks
+ * up the hit: the speed into it is gone and only this share of the speed
+ * along it is kept, then it holds you back hard (m/s² per m/s, plus a
+ * steady part) so you sink in and stop in a few metres.
+ */
+const AIRBAG_KEEP = 0.35;
+const AIRBAG_DRAG = 1.6;
+const AIRBAG_DECEL = 3;
+/** m: lying in the airbag, how far below the centre of mass the body rests on it. */
+const SUNK_BODY = 0.35;
 const SQUASH_KICK = 5; // m/s of hip drop: the legs fold fully
 const BOUNCE_DELAY = 0.14; // s: bounce at the bottom of the squash
 const BOUNCE_MIN = 2; // m/s of hop
@@ -342,6 +382,9 @@ export class Skier {
   private grabTime = 0;
   /** How long a shifty has been held this jump (s). */
   private shiftyTime = 0;
+  /** The bike's whip springs (see WHIP_SPRING). */
+  private readonly whipYaw = { x: 0, v: 0 };
+  private readonly whipLay = { x: 0, v: 0 };
   /**
    * Crashes on (the default) or off. Off, nothing ends a run: bad landings
    * are ridden away, walls just stop you, and the body touching the snow is
@@ -421,6 +464,11 @@ export class Skier {
   private stillTime = 0;
   private airTime = 0;
   private hitWall = false;
+  /**
+   * Landed in the airbag: held just as we came down (no standing back up,
+   * no slap onto the slope), resting in the dent our weight makes in it.
+   */
+  private sunk = false;
   /** Why the last crash happened, for debugging. */
   crashReason = '';
 
@@ -666,6 +714,7 @@ export class Skier {
     this.hasRideDir = false;
     this.grabTime = 0;
     this.shiftyTime = 0;
+    this.whipYaw.x = this.whipYaw.v = this.whipLay.x = this.whipLay.v = 0;
     this.jumpLocked = false;
     this.skid = 0;
     this.prevSkid = 0;
@@ -679,6 +728,8 @@ export class Skier {
     }
     this.bounceTimer = 0;
     this.mode = 'riding';
+    this.sunk = false;
+    resetAirbag();
     this.object.quaternion.identity();
     this.stance.quaternion.identity();
     Object.assign(this.current, RIDING);
@@ -806,6 +857,7 @@ export class Skier {
    */
   update(dt: number, input: Controls): void {
     if (!this.ragdoll) this.buildRagdoll();
+    stepAirbag(dt);
     if (this.mode === 'riding' && this.ride) {
       this.updatePhysical(dt, input);
       return;
@@ -813,6 +865,11 @@ export class Skier {
     if (this.mode === 'tumbling') {
       this.physics.step(dt);
       this.updateTumble(dt);
+      return;
+    }
+    if (this.sunk) {
+      this.updateSunk(dt);
+      this.driveBody(dt);
       return;
     }
 
@@ -834,7 +891,6 @@ export class Skier {
       }
       // Start counting tricks for this jump
       this.grabTime = 0;
-    this.shiftyTime = 0;
       this.shiftyTime = 0;
       this.airSpin = 0;
       this.pitch = 0;
@@ -863,13 +919,16 @@ export class Skier {
     } else if (!this.grounded) {
       this.airTime += dt;
       if (this.current.grab >= GRAB_HELD) this.grabTime += dt;
-      if (Math.abs(this.current.shifty) >= GRAB_HELD) this.shiftyTime += dt;
+      if ((this.bike ? this.whipLay.x : Math.abs(this.current.shifty)) >= GRAB_HELD) this.shiftyTime += dt;
       const feet = this.stance.getWorldPosition(tmpFeetW);
       const skisDown = this.airTime > SKI_GRACE && this.velocity.y < 0 && this.skisHitSnow();
       // The feet only mean "feet on the snow" when roughly upright; upside
       // down it's the body or skis that touch, caught above
       const upright = tmpUp.set(0, 1, 0).applyQuaternion(this.airQ).y > 0.5;
-      if ((upright && feet.y <= groundAt(feet.x, feet.z)) || skisDown) {
+      // Any way up, coming down into the airbag is landing in it
+      const low = this.restingPoint(tmpPos);
+      const inBag = this.velocity.y < 0 && onAirbag(low.x, low.z) && low.y <= heightAt(low.x, low.z);
+      if ((upright && feet.y <= groundAt(feet.x, feet.z)) || skisDown || inBag) {
         this.land();
         if (this.grounded && input.jump) {
           this.jumpLocked = true;
@@ -879,26 +938,69 @@ export class Skier {
       }
     }
 
-    // The visible body: pull it towards this frame's pose, carry it on the
-    // skis (on the snow) or by its core (in the air, so it turns about its
-    // centre of mass), and let physics do the rest
+    this.driveBody(dt);
     const ragdoll = this.ragdoll!;
-    this.airBlend += ((this.grounded ? 0 : 1) - this.airBlend) * (1 - Math.exp(-AIR_HANDOVER_RATE * dt));
+    // A fall is the real body's chest or head touching the snow (the pelvis
+    // may touch down in a deep landing squat: that's fine)
+    this.squashGrace = Math.max(0, this.squashGrace - dt);
+    if (this.mode === 'riding' && this.squashGrace === 0 && ragdoll.chestOrHeadDown()) {
+      // (On the airbag that's just landing in it, any way up)
+      if (onAirbag(this.object.position.x, this.object.position.z)) {
+        if (!this.grounded) this.land();
+      } else if (this.crashes) this.crash(this.grounded ? 'chest or head hit the snow (riding)' : 'chest or head hit the snow (air)');
+      // Crashes off, coming down head or back first: that's the landing
+      else if (!this.grounded) this.land();
+    }
+  }
+
+  /**
+   * The visible body: pull it towards this frame's pose, carry it on the
+   * skis (on the snow) or by its core (in the air, so it turns about its
+   * centre of mass; also lying in the airbag), and let physics do the rest.
+   */
+  private driveBody(dt: number): void {
+    const ragdoll = this.ragdoll!;
+    const airy = !this.grounded || this.sunk;
+    this.airBlend += ((airy ? 1 : 0) - this.airBlend) * (1 - Math.exp(-AIR_HANDOVER_RATE * dt));
     ragdoll.airBlend = this.airBlend;
-    ragdoll.grab = this.grounded ? 0 : this.current.grab;
+    ragdoll.grab = airy ? this.current.grab : 0;
     ragdoll.drive();
     this.physics.step(dt, (alpha) => ragdoll.beforeSubstep(alpha));
     ragdoll.sync();
     this.bottoms.update(dt);
     this.top.update(dt);
-    // A fall is the real body's chest or head touching the snow (the pelvis
-    // may touch down in a deep landing squat: that's fine)
-    this.squashGrace = Math.max(0, this.squashGrace - dt);
-    if (this.mode === 'riding' && this.squashGrace === 0 && ragdoll.chestOrHeadDown()) {
-      if (this.crashes) this.crash(this.grounded ? 'chest or head hit the snow (riding)' : 'chest or head hit the snow (air)');
-      // Crashes off, coming down head or back first: that's the landing
-      else if (!this.grounded) this.land();
-    }
+  }
+
+  /**
+   * In the airbag: still in the air representation, frozen in the pose we
+   * landed in. Slide to a stop, resting on the (dented) skin, and press it
+   * down where we lie.
+   */
+  private updateSunk(dt: number): void {
+    const p = this.object.position;
+    const v = this.velocity;
+    v.y = 0;
+    const speed = v.length();
+    const slow = (AIRBAG_DRAG * speed + AIRBAG_DECEL) * dt;
+    v.multiplyScalar(speed > slow ? 1 - slow / speed : 0);
+    p.addScaledVector(v, dt);
+    this.object.updateMatrixWorld(true);
+    const low = this.restingPoint(tmpPos);
+    p.y += heightAt(low.x, low.z) - low.y;
+    const com = this.body.getWorldPosition(tmpCentre);
+    pressAirbag(com.x, com.z);
+    this.object.updateMatrixWorld(true);
+  }
+
+  /**
+   * In the air representation: the point we'd rest on if we came down now,
+   * the feet (under the wheels) or, lying on our side or back, the body.
+   */
+  private restingPoint(out: THREE.Vector3): THREE.Vector3 {
+    const feet = this.feetInAir(out);
+    const com = this.body.getWorldPosition(tmpCentre);
+    if (com.y - SUNK_BODY < feet.y) out.set(com.x, com.y - SUNK_BODY, com.z);
+    return out;
   }
 
   /**
@@ -990,7 +1092,7 @@ export class Skier {
     ride.afterFrame(dt);
 
     this.squashGrace = Math.max(0, this.squashGrace - dt);
-    if (this.squashGrace === 0 && ragdoll.chestOrHeadDown()) {
+    if (this.squashGrace === 0 && ragdoll.chestOrHeadDown() && !onAirbag(this.object.position.x, this.object.position.z)) {
       if (this.crashes) this.crash(this.grounded ? 'chest or head hit the snow (physical)' : 'chest or head hit the snow (physical, air)');
     }
   }
@@ -1182,6 +1284,12 @@ export class Skier {
       (grinding ? RAIL_FRICTION : SNOW_FRICTION) * GRAVITY * n.y -
       (grinding ? 0 : SNOW_DRAG * speed) - // deep snow (the backcountry)
       drag * speed * speed;
+    // Sinking into the airbag holds you back hard
+    const inAirbag = !grinding && onAirbag(p.x, p.z, 0);
+    if (inAirbag) {
+      accel -= AIRBAG_DRAG * speed + AIRBAG_DECEL;
+      pressAirbag(p.x, p.z);
+    }
     // Braking: a hockey stop. The skis swing round across the way we're
     // going (the way we last steered) and skid; the further round, the
     // harder they stop us. We keep sliding the way we were going.
@@ -1242,6 +1350,12 @@ export class Skier {
     const pred = tmpPred.copy(p).addScaledVector(this.velocity, dt).addScaledVector(g, 0.5 * dt * dt);
     const h = groundAt(pred.x, pred.z); // the snow, or a rail's top
 
+    if (h - pred.y > WALL && onAirbag(pred.x, pred.z)) {
+      // Rode into the airbag's side: up onto it (it's soft), slowed
+      this.velocity.multiplyScalar(0.5);
+      p.set(pred.x, h, pred.z);
+      return;
+    }
     if (h - pred.y > WALL) {
       // Ran into something steep (the side of a kicker): fall if fast,
       // otherwise just stop against it
@@ -1433,14 +1547,21 @@ export class Skier {
     const rail = railAt(feet.x, feet.z, this.railContact);
     const onRail = !!rail && feet.y >= rail.top - RAIL_CATCH_BELOW;
     const flipOff = bodyUp.angleTo(onRail ? rail.normal : this.footprintNormal(feet.x, feet.z, tmpN));
-    const bad =
-      this.current.grab > GRAB_LAND_MAX
+    const airbag = !onRail && onAirbag(feet.x, feet.z);
+    const bad = airbag
+      ? ''
+      : this.current.grab > GRAB_LAND_MAX
         ? 'landed still holding the grab'
         : (!onRail && facingOff >= CLEAN_SPIN) || flipOff >= CLEAN_FLIP
           ? `bad landing: facing off ${facingOff.toFixed(2)}, flip off ${flipOff.toFixed(2)}`
           : '';
     if (bad && this.crashes) {
       this.crash(bad);
+      return;
+    }
+    if (airbag) {
+      this.sinkIn();
+      this.callOut(pitch, false, true);
       return;
     }
     // (Crashes off: ride it away; the skis swing onto the snow a bit slower)
@@ -1493,7 +1614,32 @@ export class Skier {
       this.grindAcross = this.lastGrind.across;
       this.lastGrind = { time: 0, across: 0 };
     }
-    // Call out the trick: the rail slide we came off (if any), then the air
+    this.callOut(pitch, saved, false);
+  }
+
+  /**
+   * Land in the airbag, any way up: stay just as we came down (see
+   * updateSunk), punching a dent in it as hard as we hit.
+   */
+  private sinkIn(): void {
+    this.sunk = true;
+    this.grounded = true;
+    this.object.updateMatrixWorld(true);
+    const com = this.body.getWorldPosition(tmpCentre);
+    hitAirbag(com.x, com.z, Math.max(0, -this.velocity.y));
+    this.velocity.y = 0;
+    this.velocity.multiplyScalar(AIRBAG_KEEP);
+    this.airL.set(0, 0, 0);
+    this.airOmega.set(0, 0, 0);
+    this.spinMomentum = 0;
+    this.flipVel = 0;
+    this.flipMomentum = 0;
+    this.bounceTimer = 0;
+    this.lastGrind = { time: 0, across: 0 };
+  }
+
+  /** Call out the trick just landed: the rail slide we came off (if any), then the air. */
+  private callOut(pitch: number, saved: boolean, airbag: boolean): void {
     const parts: string[] = [];
     if (this.lastGrind.time >= MIN_GRIND) {
       const kind = this.lastGrind.across > this.lastGrind.time / 2 ? 'Boardslide' : '50-50';
@@ -1505,7 +1651,7 @@ export class Skier {
     let trick = trickName(this.airSpin, pitch, this.takeoffSwitch);
     const grabName = this.board ? 'Indy' : this.bike ? 'No-hander' : 'X-Tail';
     if (grabbed) trick = trick ? `${trick} ${grabName}` : grabName;
-    const shiftyName = this.bike ? 'Tabletop' : 'Shifty';
+    const shiftyName = this.bike ? 'Whip' : 'Shifty';
     if (shifty) trick = trick ? `${trick} ${shiftyName}` : shiftyName;
     const points = trickPoints(this.airSpin, pitch, grabbed) + (shifty ? POINTS.shifty : 0);
     if (saved) {
@@ -1514,6 +1660,7 @@ export class Skier {
       return;
     }
     if (trick) parts.push(trick);
+    if (airbag && !parts.length) parts.push('Airbag');
     if (parts.length) this.onLand?.(parts.join(' + '), true, points);
   }
 
@@ -1709,6 +1856,26 @@ export class Skier {
     t.look = this.switchStance && this.grounded ? this.lookSide : 0;
     t.twist += t.look * SWITCH_TWIST;
     t.twist -= t.shifty * SHIFTY.shoulders * 2; // (shoulders turned against the skis)
+    if (this.bike) {
+      // On the bike the shifty is a whip: the bike thrown sideways and laid
+      // flat under the rider (see Person.whip), springing out and back
+      t.shifty = 0;
+      const held = !this.grounded && input.shifty;
+      const sway = held ? 1 + WHIP_SPRING.sway * Math.sin(this.airTime * WHIP_SPRING.swayRate) : 0;
+      const k = held ? WHIP_SPRING.out : WHIP_SPRING.back;
+      springStep(this.whipYaw, held ? 1 : 0, k.yaw.omega, k.yaw.zeta, dt);
+      springStep(this.whipLay, sway, k.lay.omega, k.lay.zeta, dt);
+      this.person.whip.yaw = this.whipYaw.x;
+      this.person.whip.lay = this.whipLay.x;
+      // The body goes with it: thrown over away from the wheels, folded low
+      // over the bike, which comes up under the hips
+      const w = THREE.MathUtils.clamp(this.whipLay.x, -0.3, 1.1);
+      t.twist -= this.whipYaw.x * WHIP_BODY.counter;
+      t.lean += w * WHIP_BODY.lean;
+      t.torsoPitch += Math.abs(w) * WHIP_BODY.torsoPitch;
+      t.hipHeight += Math.abs(w) * WHIP_BODY.hipHeight;
+      t.hipBack += Math.abs(w) * WHIP_BODY.hipBack;
+    }
     if (this.board) {
       // Sideways on the board: shoulders opened a little towards the nose
       // (the tail, riding switch) and the head turned to look where we're

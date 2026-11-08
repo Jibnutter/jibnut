@@ -193,6 +193,15 @@ export const GRAB = {
 /** A shifty at full strength: skis turned this far (rad, + = tips left), shoulders back the other way. */
 // (45° to the left, tips dipped a little)
 export const SHIFTY = { skis: Math.PI / 4, shoulders: 0.55, tipDown: 0.2 };
+/**
+ * The bike's whip at full strength (Person.whip = 1): tail thrown out to the
+ * right (yaw, rad: nose left), the bike laid over flat with its wheels out
+ * that side (lay, rad about its length), nose dipped a little. It turns about
+ * a point on the centreline this far up towards the grips, so the bars stay
+ * near the hands while the wheels and pedals (and the legs with them) swing
+ * out underneath.
+ */
+const WHIP = { yaw: 0.75, lay: 1.38, noseDown: 0.15, pivotUp: 0.75 };
 /** On the bike, the head tips back up to this far (rad) to look ahead. */
 const BIKE_LOOK_UP = 1.3;
 /** On a board, the grab pulls both feet up this far. */
@@ -330,6 +339,12 @@ export class Person {
    * no-hander: both hands off the bars, out wide.
    */
   bike = false;
+  /**
+   * The whip (on the bike, set each frame by the rider): yaw throws the tail
+   * out, lay lays the bike flat; 1 is a full whip (see WHIP). Driven by
+   * springs, so they can overshoot past 0 or 1.
+   */
+  readonly whip = { yaw: 0, lay: 0 };
   /** Where the hands hold the bars, in the bike's (half 0's) frame: from its design. */
   readonly bikeGrips = GRIPS.map((g) => g.clone());
   /** The bike's frame design (the workshop). */
@@ -516,6 +531,19 @@ export class Person {
       // ahead down the trail rather than at the front wheel)
       .multiply(tmpHeadTurn.setFromAxisAngle(tmpX.set(1, 0, 0), -nod + (this.bike ? Math.min(BIKE_LOOK_UP, torsoPitch * 1.2) : 0)));
 
+    // The whip: one turn for the whole bike, about a pivot up towards the
+    // bars (in the person's frame; the bike's centreline is x = 0)
+    const whipping = this.bike && (this.whip.yaw !== 0 || this.whip.lay !== 0);
+    if (whipping) {
+      const gy = (this.bikeGrips[0].y + this.bikeGrips[1].y) / 2;
+      const gz = (this.bikeGrips[0].z + this.bikeGrips[1].z) / 2;
+      tmpWhipPivot.set(0, BODY.ankleHeight - ANKLE_ABOVE_SKI + gy * WHIP.pivotUp, gz);
+      tmpWhipQ
+        .setFromAxisAngle(UP, this.whip.yaw * WHIP.yaw)
+        .multiply(tmpFlexQ.setFromAxisAngle(tmpZ.set(0, 0, 1), this.whip.lay * WHIP.lay))
+        .multiply(tmpFlexQ.setFromAxisAngle(tmpX.set(1, 0, 0), -Math.abs(this.whip.lay) * WHIP.noseDown));
+    }
+
     for (let i = 0; i < 2; i++) {
       const s = i === 0 ? -1 : 1; // left, right
 
@@ -527,7 +555,9 @@ export class Person {
       // come up together (blended in by p.grab)
       const g = p.grab;
       // (A shifty turns both legs and skis together, from the hips)
-      const skiYaw = this.board ? 0 : (this.bike ? 0 : GRAB.yaw[i] * g) + p.shifty * SHIFTY.skis;
+      const skiYaw = this.board ? 0 : this.bike ? this.whip.yaw * WHIP.yaw : GRAB.yaw[i] * g + p.shifty * SHIFTY.skis;
+      // Whipping, the feet ride the pedals round the pivot
+      if (whipping) j.ankles[i].sub(tmpWhipPivot).applyQuaternion(tmpWhipQ).add(tmpWhipPivot);
       if (g > 0 && !this.bike) {
         if (this.board) j.ankles[i].y += BOARD_GRAB_LIFT * g;
         else j.ankles[i].lerp(i === 1 ? GRAB.rightAnkle : GRAB.leftAnkle, g);
@@ -549,7 +579,8 @@ export class Person {
         ski.q.setFromAxisAngle(UP, Math.PI / 2);
       } else if (g > 0 && !this.bike) ski.q.slerp(tmpPitchQ.copy(this.shins[i].mesh.quaternion).multiply(this.bootRest[i]), g);
       // Shifty: the skis turned with the legs, tips pointing down a little
-      if (!this.board && p.shifty !== 0) {
+      if (whipping) ski.q.copy(tmpWhipQ);
+      else if (!this.board && !this.bike && p.shifty !== 0) {
         tmpPitchQ.setFromAxisAngle(UP, p.shifty * SHIFTY.skis).multiply(tmpFlexQ.setFromAxisAngle(tmpX.set(1, 0, 0), -Math.abs(p.shifty) * SHIFTY.tipDown));
         ski.q.premultiply(tmpPitchQ);
       }
@@ -614,6 +645,8 @@ const tmpUnturned = new THREE.Vector3();
 const tmpX = new THREE.Vector3();
 const tmpHandOff = new THREE.Vector3();
 const tmpShoulderSide = new THREE.Vector3();
+const tmpWhipPivot = new THREE.Vector3();
+const tmpWhipQ = new THREE.Quaternion();
 const tmpHeadTurn = new THREE.Quaternion();
 // How far the neck turns the head when looking over a shoulder (plus the shoulder twist)
 const HEAD_TURN = 1.6;

@@ -10,6 +10,7 @@
 
 import * as THREE from 'three';
 import { createNoise2D } from 'simplex-noise';
+import { Cloth } from './airbagCloth';
 import { loadMaps, decodeSculpt, SCULPT, GRID_W, GRID_H, MAP_BUILDER_ENABLED, type CustomMap } from './customMaps';
 
 /**
@@ -95,6 +96,23 @@ interface MapDef extends MapInfo {
   doubles?: Double[];
   /** A wooden drop: a ramp up onto a deck that ends in a drop to the slope below. */
   drop?: Drop;
+  /** A second line beside the main one: a roll-in tower, a big wooden kicker and an airbag to land in. */
+  bigLine?: BigLine;
+}
+
+/**
+ * The big line: its own line beside the main one, straight down the hill
+ * at world x (so riding straight off the tower lines you up with the
+ * kicker, wherever the main course bends), positions as s down the course. A wooden tower on the start deck with a
+ * steep roll-in down to the slope, a big wooden kicker, and a huge airbag
+ * to land in (you can't crash on it).
+ */
+interface BigLine {
+  x: number; // world x of its centreline
+  halfWidth: number; // ridden width of the tower and kicker
+  tower: { back: number; front: number; height: number; ramp: number }; // platform s back..front, its top this high above the ground at its front; then the ramp down, this long
+  kicker: { lip: number; height: number; length: number };
+  airbag: { foot: number; length: number; height: number; halfWidth: number }; // foot: m past the lip
 }
 
 /**
@@ -281,8 +299,9 @@ const BACKCOUNTRY: MapDef = {
 const SUMMER: MapDef = {
   id: 'summer',
   name: 'Summer Dirt',
-  description: 'The snow is gone: a steep downhill track down a grassy hill. Four big dirt gaps, each bigger than the last, then a big wooden drop. Commit or case it.',
-  features: ['4 dirt gap jumps: 10 to 21.5 m gaps', 'Wooden drop: 4 m', 'Steep and fast: up to 90 km/h, bike only'],
+  description:
+    'The snow is gone: a steep downhill track down a grassy hill. Four big dirt gaps, each bigger than the last, then a big wooden drop. Commit or case it. Or the big line beside it: a steep roll-in and a huge wooden kicker into an airbag.',
+  features: ['4 dirt gap jumps: 10 to 21.5 m gaps', 'Wooden drop: 4 m', 'Big line: roll-in tower, wooden kicker, airbag', 'Steep and fast: up to 90 km/h, bike only'],
   sMin: -70,
   startAngle: -18,
   program: [
@@ -351,6 +370,16 @@ const SUMMER: MapDef = {
     { tag: 'd4', height: 2.4, takeoff: 7.5, gap: 21.5, landHeight: 2.2, top: 1.2, landing: 16, halfWidth: 3 },
   ],
   drop: { tag: 'drop', height: 4, ramp: 16, deck: 7, halfWidth: 1.5 },
+  // Left of the dirt line: off a 5 m tower on the start deck (the roll-in
+  // tops out at 38°), down the steep slope to a big kicker (~53 km/h off a
+  // 30° lip: about 7.5 m up and 24 m out), into the middle of the airbag
+  bigLine: {
+    x: -18,
+    halfWidth: 2,
+    tower: { back: -4, front: 1, height: 5, ramp: 10 },
+    kicker: { lip: 62, height: 3, length: 8 },
+    airbag: { foot: 10, length: 22, height: 2.6, halfWidth: 6 },
+  },
 };
 
 /**
@@ -616,7 +645,97 @@ export const JUMPS: Jump[] = [
         },
       ]
     : []),
+  ...(M.bigLine
+    ? [
+        {
+          startZ: zAt(M.bigLine.kicker.lip - M.bigLine.kicker.length),
+          lipZ: zAt(M.bigLine.kicker.lip),
+          knuckleZ: zAt(M.bigLine.kicker.lip),
+          endZ: zAt(M.bigLine.kicker.lip + M.bigLine.airbag.foot + M.bigLine.airbag.length),
+          halfWidth: M.bigLine.halfWidth,
+        },
+      ]
+    : []),
 ];
+
+/** Where the big line starts (Summer Dirt): just over the edge of its tower's roll-in (null: no big line). */
+export const BIG_LINE_START = M.bigLine
+  ? (() => {
+      const z = zAt(M.bigLine.tower.front + 1.5);
+      return { x: M.bigLine.x, z };
+    })()
+  : null;
+
+/**
+ * Is (x, z) over the big line's airbag (within margin m of it)? Nothing
+ * that happens on it is a crash.
+ */
+export function onAirbag(x: number, z: number, margin = 0.6): boolean {
+  const b = M.bigLine;
+  if (!b) return false;
+  courseCoords(x, z);
+  const e = cs - b.kicker.lip - b.airbag.foot;
+  return e > -margin && e < b.airbag.length + margin && Math.abs(x - b.x) < b.airbag.halfWidth + margin;
+}
+
+// The airbag's skin (see airbagCloth.ts): a grid over its footprint and a
+// little beyond (the edge rows are held, at its seams). The ridden surface
+// is heightAt minus its dent.
+const AIRBAG_CELL = 0.25;
+let cloth: Cloth | null | undefined;
+function airbagCloth(): Cloth | null {
+  if (cloth !== undefined) return cloth;
+  const b = M.bigLine;
+  if (!b) return (cloth = null);
+  const a = b.airbag;
+  const e0 = b.kicker.lip + a.foot - 0.4;
+  const e1 = b.kicker.lip + a.foot + a.length + 0.4;
+  const cols = Math.ceil((2 * (a.halfWidth + 0.4)) / AIRBAG_CELL) + 1;
+  const rows = Math.ceil((e1 - e0) / AIRBAG_CELL) + 1;
+  const x0 = b.x - ((cols - 1) * AIRBAG_CELL) / 2;
+  const z0 = zAt(e1);
+  // A point bottoms out a little above the ground (the bag squashed flat)
+  const cap = new Float32Array(cols * rows);
+  for (let iz = 0; iz < rows; iz++) {
+    for (let ix = 0; ix < cols; ix++) {
+      const x = x0 + ix * AIRBAG_CELL;
+      const z = z0 + iz * AIRBAG_CELL;
+      courseCoords(x, z);
+      cap[iz * cols + ix] = Math.max(0, bigLineHeight(b, cs, x) - 0.35);
+    }
+  }
+  return (cloth = new Cloth({ x0, z0, cols, rows, cell: AIRBAG_CELL, cap }));
+}
+/** How far the airbag's skin is dented in at (x, z), m (0 off it, or with no airbag). */
+function airbagDent(x: number, z: number): number {
+  return cloth ? cloth.dentAt(x, z) : 0;
+}
+let airbagMeshUpdate: (() => void) | null = null;
+/** Move the airbag's skin on (and its mesh with it). */
+export function stepAirbag(dt: number): void {
+  const c = airbagCloth();
+  if (!c) return;
+  c.step(dt);
+  if (c.dirty) {
+    c.dirty = false;
+    airbagMeshUpdate?.();
+  }
+}
+/** A rider sits on the airbag at (x, z) this frame. */
+export function pressAirbag(x: number, z: number): void {
+  airbagCloth()?.press(x, z);
+}
+/** A rider hits the airbag at (x, z), coming down at speed m/s. */
+export function hitAirbag(x: number, z: number, speed: number): void {
+  airbagCloth()?.hit(x, z, speed);
+}
+/** Smooth the airbag out again (a new run). */
+export function resetAirbag(): void {
+  const c = airbagCloth();
+  if (!c) return;
+  c.reset();
+  stepAirbag(0);
+}
 
 /** Where the menu's camera circles (world x, z). */
 export const SHOWCASE = (() => {
@@ -691,7 +810,52 @@ function features(s: number, u: number, x: number, z: number): number {
     for (const d of M.doubles) h += doubleHeight(d, s - tags[d.tag], Math.abs(u));
   }
   if (M.drop) h += dropHeight(M.drop, s, Math.abs(u));
+  if (M.bigLine) h += bigLineHeight(M.bigLine, s, x);
   return h;
+}
+
+/** Height the big line adds (its tower, kicker and airbag) at s down the course, world x. */
+function bigLineHeight(b: BigLine, s: number, x: number): number {
+  const au = Math.abs(x - b.x);
+  let h = 0;
+  const t = b.tower;
+  if (s > t.back - DECK_SIDE && s < t.front + t.ramp && au < b.halfWidth + DECK_SIDE) {
+    h = rollInAbove(b, s) * (1 - THREE.MathUtils.smoothstep(au, b.halfWidth, b.halfWidth + DECK_SIDE));
+  }
+  const k = b.kicker;
+  const d = s - k.lip;
+  if (d > -k.length && d < DECK_SIDE && au < b.halfWidth + DECK_SIDE) {
+    // Curving up to the lip (y = H t²), then the boarded back straight down
+    const up = d <= 0 ? ((d + k.length) / k.length) ** 2 : 1 - THREE.MathUtils.smoothstep(d, 0, DECK_SIDE);
+    h = Math.max(h, k.height * up * (1 - THREE.MathUtils.smoothstep(au, b.halfWidth, b.halfWidth + DECK_SIDE)));
+  }
+  const a = b.airbag;
+  const e = s - k.lip - a.foot;
+  if (airbagSolid && e > 0 && e < a.length && au < a.halfWidth) h = Math.max(h, airbagAbove(a, e, au));
+  return h;
+}
+
+/** The big line's tower and roll-in: height above the ground at s (ridden width; the sides are boarded). */
+function rollInAbove(b: BigLine, s: number): number {
+  const t = b.tower;
+  const g = (x: number) => lookup(mainH, x);
+  const top = g(t.front) + t.height; // the platform: level
+  if (s < t.back) return (top - g(s)) * (1 - THREE.MathUtils.smoothstep(s, t.back - DECK_SIDE, t.back)); // its back wall
+  if (s <= t.front) return top - g(s);
+  // The roll-in: rounding over the platform's edge, steepest midway,
+  // rounding into the slope at its foot
+  const k = (1 + Math.cos((Math.PI * (s - t.front)) / t.ramp)) / 2;
+  return k * (top - g(s));
+}
+
+/** Off while building the terrain meshes: the airbag is its own (moving) mesh, and the body's colliders pass into it. */
+let airbagSolid = true;
+const AIRBAG_ROUND = 1.5; // m: the airbag's edges round down over this
+/** The airbag: a big inflated cushion, rounded at its edges, a little crowned. e m from its uphill foot, au from its middle. */
+function airbagAbove(a: BigLine['airbag'], e: number, au: number): number {
+  const r = Math.min(1, e / AIRBAG_ROUND) * Math.min(1, (a.length - e) / AIRBAG_ROUND) * Math.min(1, (a.halfWidth - au) / AIRBAG_ROUND);
+  const crown = 0.25 * (1 - (au / a.halfWidth) ** 2);
+  return (a.height + crown) * Math.sin((r * Math.PI) / 2);
 }
 
 const DIRT_SIDE = 1.1; // m: a dirt jump's sides fall away over this
@@ -816,12 +980,25 @@ function builtAt(x: number, z: number): number {
   if (deck && cs > deck.start - margin && cs < deck.edge + margin) {
     built = Math.max(built, 1 - THREE.MathUtils.smoothstep(ax, deck.halfWidth, deck.halfWidth + margin));
   }
+  const b = M.bigLine;
+  if (b) {
+    const au = Math.abs(x - b.x);
+    const k = b.kicker;
+    const near = (from: number, to: number, hw: number) =>
+      cs > from - margin && cs < to + margin ? 1 - THREE.MathUtils.smoothstep(au, hw, hw + margin) : 0;
+    built = Math.max(
+      built,
+      near(b.tower.back, b.tower.front + b.tower.ramp, b.halfWidth + 0.5),
+      near(k.lip - k.length, k.lip, b.halfWidth + 0.5),
+      near(k.lip + b.airbag.foot, k.lip + b.airbag.foot + b.airbag.length, b.airbag.halfWidth),
+    );
+  }
   return built;
 }
 
 /** Terrain height at world (x, z). Physics, meshes and colliders all use this. */
 export function heightAt(x: number, z: number): number {
-  return groundHeight(x, z) + placedKickerHeight(x, z);
+  return groundHeight(x, z) + placedKickerHeight(x, z) - airbagDent(x, z);
 }
 
 // ---------------------------------------------------------------------------
@@ -1063,6 +1240,7 @@ export function terrainGeometry(): { course: THREE.BufferGeometry; outer: THREE.
   if (cached) return cached;
   const zTop = MOUNTAIN_TOP_Z;
   const zBottom = MOUNTAIN_BOTTOM_Z;
+  airbagSolid = false;
   const course = gridGeometry(-COURSE_MESH_HALF, COURSE_MESH_HALF, zBottom, zTop, COURSE_CELL, heightAt, courseX);
   const outer = gridGeometry(-OUTER_HALF, OUTER_HALF, zBottom - 40, zTop + 40, OUTER_CELL, (x, z) => {
     // Under the course mesh, sink well out of sight
@@ -1070,6 +1248,7 @@ export function terrainGeometry(): { course: THREE.BufferGeometry; outer: THREE.
     const h = heightAt(x, zc);
     return Math.abs(x - courseX(zc)) < OUTER_HIDE ? h - 3 : h;
   });
+  airbagSolid = true;
   cached = { course, outer };
   return cached;
 }
@@ -1197,6 +1376,174 @@ function dropMesh(d: Drop): THREE.Group {
       group.add(post);
     }
   }
+  return group;
+}
+
+/**
+ * Boarded woodwork straight down the hill at world x0: planks across the top
+ * (its height top(s), from s0 to s1), boarded sides down into the ground,
+ * and an end wall down to the ground at each s in walls.
+ */
+function boarded(s0: number, s1: number, x0: number, out: number, top: (s: number) => number, walls: number[]): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const idx: number[] = [];
+  const quad = (a: number[], b: number[], c: number[], e: number[], ua: number[], ub: number[], uc: number[], ue: number[]) => {
+    const i = pos.length / 3;
+    pos.push(...a, ...b, ...c, ...e);
+    uv.push(...ua, ...ub, ...uc, ...ue);
+    idx.push(i, i + 1, i + 2, i, i + 2, i + 3);
+  };
+  const P = (s: number, u: number, y: number) => [x0 + u, y, -s];
+  const ground = (s: number, u: number) => heightAt(x0 + u, -s) - 0.15;
+  const R = 0.14 * 8; // m per texture repeat (8 planks)
+  const steps = Math.ceil((s1 - s0) / 0.25);
+  for (let k = 0; k < steps; k++) {
+    const a = s0 + ((s1 - s0) * k) / steps;
+    const b = s0 + ((s1 - s0) * (k + 1)) / steps;
+    const v0 = a / R;
+    const v1 = b / R;
+    quad(P(a, -out, top(a)), P(a, out, top(a)), P(b, out, top(b)), P(b, -out, top(b)), [0, v0], [1, v0], [1, v1], [0, v1]);
+    for (const side of [-1, 1]) {
+      const u = side * out;
+      const h0 = (top(a) - ground(a, u)) / R;
+      const h1 = (top(b) - ground(b, u)) / R;
+      const qa = P(a, u, top(a));
+      const qb = P(b, u, top(b));
+      const qc = P(b, u, ground(b, u + side * 0.3));
+      const qe = P(a, u, ground(a, u + side * 0.3));
+      if (side > 0) quad(qa, qe, qc, qb, [v0, 0], [v0, h0], [v1, h1], [v1, 0]);
+      else quad(qa, qb, qc, qe, [v0, 0], [v1, 0], [v1, h1], [v0, h0]);
+    }
+  }
+  for (const w of walls) {
+    const yTop = top(w);
+    const yLow = Math.min(ground(w, -out), ground(w, out)) - 0.1;
+    const hv = (yTop - yLow) / R;
+    quad(P(w, out, yTop), P(w, -out, yTop), P(w, -out, yLow), P(w, out, yLow), [0, 0], [1, 0], [1, hv], [0, hv]);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/** Airbag vinyl: wide panels with seams running down it. */
+function airbagTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.22)'; // seams between the panels
+  for (let x = 0; x < size; x += 64) ctx.fillRect(x, 0, 3, size);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.08)'; // a few stitched lines across
+  for (let y = 0; y < size; y += 128) ctx.fillRect(0, y, size, 2);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  return tex;
+}
+
+/**
+ * The big line's look (its shape is in heightAt): the boarded roll-in tower
+ * on its scaffold legs, the wooden kicker, and the airbag: blue on top,
+ * yellow down its rounded sides.
+ */
+function bigLineMesh(b: BigLine): THREE.Group {
+  const group = new THREE.Group();
+  const wood = new THREE.MeshStandardMaterial({ map: woodTexture(), roughness: 0.85, side: THREE.DoubleSide });
+  const out = b.halfWidth + 0.3;
+  const top = (s: number) => heightAt(b.x, -s) + 0.03;
+  const t = b.tower;
+  const k = b.kicker;
+  for (const geo of [
+    boarded(t.back, t.front + t.ramp, b.x, out, top, [t.back]),
+    boarded(k.lip - k.length + 0.6, k.lip, b.x, out, top, [k.lip]),
+  ]) {
+    const mesh = new THREE.Mesh(geo, wood);
+    mesh.castShadow = mesh.receiveShadow = true;
+    group.add(mesh);
+  }
+  // Posts up the tower's corners and the kicker's back, a little proud of the boarding
+  const postMat = new THREE.MeshStandardMaterial({ color: 0x5a3b22, roughness: 0.9 });
+  const posts: [number, number][] = [
+    [t.back, top(t.back) + 1.0], // (the back ones stand up as a rail)
+    [t.front, top(t.front) + 0.1],
+    [t.front + t.ramp * 0.35, top(t.front + t.ramp * 0.35) - 0.05],
+    [k.lip, top(k.lip) + 0.1],
+  ];
+  for (const [ps, yt] of posts) {
+    for (const u of [-out, out]) {
+      const x = b.x + u + Math.sign(u) * 0.08;
+      const yb = heightAt(x, -ps) - 0.3;
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, yt - yb, 0.16), postMat);
+      post.position.set(x, (yt + yb) / 2, -ps);
+      post.castShadow = post.receiveShadow = true;
+      group.add(post);
+    }
+  }
+  // The tower's back rail, across between its back posts
+  const rail = new THREE.Mesh(new THREE.BoxGeometry(2 * out + 0.3, 0.1, 0.1), postMat);
+  rail.position.set(b.x, top(t.back) + 0.95, -t.back);
+  group.add(rail);
+
+  // The airbag: its skin's grid (and a skirt just past its edges), just
+  // above the ground's copy of its shape, moved by the skin's dent
+  const a = b.airbag;
+  const skin = airbagCloth()!;
+  const { x0, z0, cols, rows, cell } = skin.rect;
+  const pos = new Float32Array(cols * rows * 3);
+  const baseY = new Float32Array(cols * rows);
+  const uv: number[] = [];
+  const col: number[] = [];
+  const blue = new THREE.Color(0x1f6fe0).convertSRGBToLinear();
+  const yellow = new THREE.Color(0xf2c230).convertSRGBToLinear();
+  const c = new THREE.Color();
+  for (let iz = 0; iz < rows; iz++) {
+    const z = z0 + iz * cell;
+    for (let ix = 0; ix < cols; ix++) {
+      const x = x0 + ix * cell;
+      const i = iz * cols + ix;
+      const y = heightAt(x, z) + skin.d[i];
+      const above = bigLineHeight(b, cs, x); // (heightAt left cs at this point)
+      baseY[i] = y + 0.05 + 0.02 * Math.min(1, above);
+      pos.set([x, baseY[i] - skin.d[i], z], i * 3);
+      uv.push((x - b.x) / 4, -z / 8);
+      // Blue on top, yellow down the sides
+      c.lerpColors(yellow, blue, THREE.MathUtils.smoothstep(above / (a.height + 0.25), 0.82, 0.95));
+      col.push(c.r, c.g, c.b);
+    }
+  }
+  const idx: number[] = [];
+  for (let iz = 0; iz < rows - 1; iz++) {
+    for (let ix = 0; ix < cols - 1; ix++) {
+      const i = iz * cols + ix;
+      idx.push(i, i + cols, i + 1, i + 1, i + cols, i + cols + 1);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  const posAttr = new THREE.BufferAttribute(pos, 3);
+  posAttr.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute('position', posAttr);
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.setIndex(idx);
+  geo.computeVertexNormals();
+  airbagMeshUpdate = () => {
+    for (let i = 0; i < baseY.length; i++) pos[i * 3 + 1] = baseY[i] - skin.d[i];
+    posAttr.needsUpdate = true;
+    geo.computeVertexNormals();
+  };
+  const vinyl = new THREE.MeshStandardMaterial({ map: airbagTexture(), vertexColors: true, roughness: 0.45, side: THREE.DoubleSide });
+  const bag = new THREE.Mesh(geo, vinyl);
+  bag.castShadow = bag.receiveShadow = true;
+  bag.frustumCulled = false; // (its bounds move)
+  group.add(bag);
   return group;
 }
 
@@ -1386,6 +1733,17 @@ function summerColor(x: number, z: number, bare: number, out: THREE.Color): void
   }
   const built = builtAt(x, z);
   dirt = Math.max(dirt, built);
+  if (M.bigLine) {
+    // The big line: a worn track from the roll-in's foot to the kicker, and
+    // round the airbag
+    const b = M.bigLine;
+    const bu = Math.abs(x - b.x);
+    const k = b.kicker;
+    if (s > b.tower.front && s < k.lip + b.airbag.foot + b.airbag.length + 6) {
+      const edge = (s > k.lip ? b.airbag.halfWidth + 1.5 : 2.8) + 0.6 * noise(s / 6 + 950, 7);
+      dirt = Math.max(dirt, 1 - THREE.MathUtils.smoothstep(bu, edge, edge + 1.2));
+    }
+  }
   if (M.drop) {
     // The drop's landing: worn wide
     const d = s - tags[M.drop.tag];
@@ -1475,6 +1833,7 @@ export function createTerrain(): THREE.Group {
   group.add(dyeLine(finishZ, fx - span, fx + span, 0.6, new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.9, side: THREE.DoubleSide })));
 
   if (M.drop) group.add(dropMesh(M.drop));
+  if (M.bigLine) group.add(bigLineMesh(M.bigLine));
   if (M.summer) return group; // (no dye on dirt)
 
   // Blue dye across each jump's lip and knuckle, as in a real park

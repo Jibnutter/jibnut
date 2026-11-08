@@ -20,7 +20,7 @@ import './style.css';
 import { Skier } from './skier';
 import { ChaseCamera } from './chaseCamera';
 import { readControls, pollGamepad, rumble } from './input';
-import { createTerrain, MAP, SHOWCASE, CAN_BUILD, SPAWN, CUSTOM, SUMMER_MAP, heightAt, courseX, START_Z, FINISH_Z, END_Z, DECK_END_Z } from './terrain';
+import { createTerrain, MAP, SHOWCASE, CAN_BUILD, SPAWN, CUSTOM, SUMMER_MAP, BIG_LINE_START, onAirbag, heightAt, courseX, START_Z, FINISH_Z, END_Z, DECK_END_Z } from './terrain';
 import { Scenery } from './scenery';
 import { createRails } from './rails';
 import { Powder } from './powder';
@@ -158,6 +158,10 @@ function restart(): void {
     // A custom map: from its spawn point, facing the way it says
     skier.reset(SPAWN.x, SPAWN.z);
     skier.heading = SPAWN.yaw;
+  } else if (BIG_LINE_START && Math.random() < 0.5) {
+    // Summer Dirt: each run is the dirt line or the big line (the roll-in
+    // tower, the kicker and the airbag), at random
+    skier.reset(BIG_LINE_START.x, BIG_LINE_START.z);
   } else skier.reset(courseX(startZ), startZ);
   setScore(0); // a fresh run
   crossed = false;
@@ -340,6 +344,7 @@ window.addEventListener('keydown', (e) => {
 let stoppedFor = 0;
 
 const timer = new THREE.Timer();
+let restingInAirbag = 0; // s, settled in the big line's airbag
 const IDLE = { steer: 0, tuck: false, brake: false, jump: false };
 const tmpLocker = new THREE.Vector3();
 const tmpLockerSide = new THREE.Vector3();
@@ -358,7 +363,11 @@ renderer.setAnimationLoop((time) => {
     // Build mode: the rider waits; the camera flies (see BuildMode)
     building.update(dt);
   } else if (playing) {
-    const finished = skier.mode === 'riding' && skier.object.position.z < FINISH_Z;
+    // The big line's run ends in the airbag: settled in it (a moment after
+    // the landing's callout) is the finish
+    const sp = skier.object.position;
+    restingInAirbag = skier.mode === 'riding' && skier.grounded && skier.speed < 1 && onAirbag(sp.x, sp.z) ? restingInAirbag + dt : 0;
+    const finished = skier.mode === 'riding' && (sp.z < FINISH_Z || restingInAirbag > 0.9 || (crossed && onAirbag(sp.x, sp.z)));
     if (finished && !crossed) {
       // Over the finish line: call out the run's score
       crossed = true;

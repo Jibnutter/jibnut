@@ -150,7 +150,7 @@ export class StartScreen {
           <dt class="group">On the mountain bike</dt><dd class="group"></dd>
           <dt><kbd>W</kbd></dt><dd>Pedal</dd>
           <dt>Space + <kbd>S</kbd> / <kbd>W</kbd></dt><dd>Backflip / frontflip: yank the bars back, or throw the bike forward, off the lip</dd>
-          <dt><kbd>Space</kbd> / <kbd>Right Shift</kbd></dt><dd>In the air: no-hander / tabletop</dd>
+          <dt><kbd>Space</kbd> / <kbd>Right Shift</kbd></dt><dd>In the air: no-hander / whip</dd>
           <dt class="group">Anytime</dt><dd class="group"></dd>
           <dt><kbd>C</kbd></dt><dd>First / third person</dd>
           <dt><kbd>R</kbd></dt><dd>Restart the run</dd>
@@ -162,7 +162,7 @@ export class StartScreen {
           <dt><kbd>RT</kbd> or stick up</dt><dd>Tuck / pedal (W)</dd>
           <dt><kbd>LT</kbd> or stick down</dt><dd>Brake (S)</dd>
           <dt><kbd>A</kbd></dt><dd>Jump, and in the air grab / no-hander (Space)</dd>
-          <dt><kbd>B</kbd> / <kbd>RB</kbd></dt><dd>Shifty / tabletop (Right Shift)</dd>
+          <dt><kbd>B</kbd> / <kbd>RB</kbd></dt><dd>Shifty / whip (Right Shift)</dd>
           <dt><kbd>X</kbd> · <kbd>Y</kbd> · <kbd>☰</kbd></dt><dd>Restart · camera · menu</dd>
           <dt>In the menus</dt><dd>D-pad or stick to move, <kbd>A</kbd> to pick, <kbd>B</kbd> to go back</dd>
         </dl>
