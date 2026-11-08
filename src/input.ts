@@ -64,11 +64,21 @@ const wasDown: boolean[] = [];
 let navHeld = '';
 let navRepeatAt = 0;
 
-/** The first connected pad, if any. */
+/**
+ * The pad to read: one with the standard layout (an Xbox pad has it) before
+ * anything else, and of those, the last one used. (Not just the first in the
+ * list: other USB gadgets show up as "gamepads" too, like an RGB lighting
+ * controller or a wireless keyboard's receiver, often ahead of the real pad.)
+ */
 function activePad(): Gamepad | null {
-  const pads = navigator.getGamepads?.() ?? [];
-  for (const p of pads) if (p && p.connected) return p;
-  return null;
+  let best: Gamepad | null = null;
+  for (const p of navigator.getGamepads?.() ?? []) {
+    if (!p || !p.connected) continue;
+    const standard = p.mapping === 'standard';
+    const bestStandard = best?.mapping === 'standard';
+    if (!best || (standard && !bestStandard) || (standard === bestStandard && p.timestamp > best.timestamp)) best = p;
+  }
+  return best;
 }
 
 /** Shake the controller (if it can): strength 0..1, for ms. */
