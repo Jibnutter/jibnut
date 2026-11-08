@@ -32,6 +32,7 @@ import { StartScreen } from './startScreen';
 import * as progress from './progress';
 import { Physics } from './physics';
 import { PhysicsDebug } from './physicsDebug';
+import { Sound } from './sound';
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -77,6 +78,7 @@ scene.add(skier.object); // hidden: the controller's posed target
 scene.add(skier.view); // the ragdoll you see
 
 const chase = new ChaseCamera(camera, skier);
+const sound = new Sound(); // (starts on the first click or key: N mutes)
 chase.snap();
 
 // Collision shapes overlay, toggled with C
@@ -105,7 +107,7 @@ hud.innerHTML = `
   <div class="score"><span class="label">Score</span> <span class="value">0</span></div>
   <div class="speed"></div>
   <div class="power"><div class="fill"></div></div>
-  <div class="hint">Esc menu &amp; controls · R restart · C camera${CAN_BUILD ? ' · M build kickers' : ''} · P physical skiing · K colliders</div>`;
+  <div class="hint">Esc menu &amp; controls · R restart · C camera${CAN_BUILD ? ' · M build kickers' : ''} · P physical skiing · K colliders · N sound</div>`;
 document.body.appendChild(hud);
 const speedEl = hud.querySelector<HTMLDivElement>('.speed')!;
 const scoreEl = hud.querySelector<HTMLSpanElement>('.score .value')!;
@@ -131,6 +133,7 @@ document.body.appendChild(trickEl);
 let trickTimer: number | undefined;
 skier.onLand = (message, clean, points) => {
   setScore(score + points);
+  if (clean) sound.chime(points);
   trickEl.innerHTML = '';
   trickEl.append(message);
   if (points > 0) {
@@ -155,6 +158,7 @@ function restart(): void {
   } else skier.reset(courseX(startZ), startZ);
   setScore(0); // a fresh run
   crossed = false;
+  sound.reset();
   powder.clear(); // fresh snow for the new run
   chase.snap();
 }
@@ -312,6 +316,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (building.active) return; // (riding keys wait while building)
   if (e.code === 'KeyR') restart();
+  if (e.code === 'KeyN') sound.toggleMute();
   if (e.code === 'KeyP' && !skier.board && !skier.bike) {
     // Fully physical skiing on/off (from the start of a fresh run)
     skier.physicalMode = !skier.physicalMode;
@@ -332,6 +337,7 @@ window.addEventListener('keydown', (e) => {
 let stoppedFor = 0;
 
 const timer = new THREE.Timer();
+const IDLE = { steer: 0, tuck: false, brake: false, jump: false };
 const tmpLocker = new THREE.Vector3();
 const tmpLockerSide = new THREE.Vector3();
 
@@ -369,7 +375,9 @@ renderer.setAnimationLoop((time) => {
       trickTimer = window.setTimeout(() => (trickEl.className = ''), 3500);
     }
     const controls = readControls();
-    skier.update(dt, finished && skier.grounded ? { ...controls, brake: true, jump: false } : controls);
+    const ridden = finished && skier.grounded ? { ...controls, brake: true, jump: false } : controls;
+    skier.update(dt, ridden);
+    sound.update(dt, skier, ridden, true);
     powder.update(dt, skier, controls);
     physicsDebug.update();
     stoppedFor = finished && skier.grounded && skier.speed < 0.5 ? stoppedFor + dt : 0;
@@ -411,6 +419,7 @@ renderer.setAnimationLoop((time) => {
     camera.position.set(cx, Math.max(y + 16, heightAt(cx, cz) + 15), cz);
     camera.lookAt(x, y - 2, z);
   }
+  if (!(playing && !editor?.active && !building.active)) sound.update(dt, skier, IDLE, false); // (just the ambience)
   powder.setView(renderer.domElement.height, camera.fov);
 
   const state =

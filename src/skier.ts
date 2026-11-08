@@ -519,6 +519,11 @@ export class Skier {
     return this.velocity.length();
   }
 
+  /** Sliding a rail right now. */
+  get grinding(): boolean {
+    return this.grindTime > 0;
+  }
+
   /** Where ski i (0 left, 1 right) is, in the world: for snow effects. */
   skiWorld(i: number, out: THREE.Vector3): THREE.Vector3 {
     // (The ragdoll moves these: bring their matrices up to date first)
