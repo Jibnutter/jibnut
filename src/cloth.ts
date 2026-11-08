@@ -75,6 +75,27 @@ export interface ClothRing {
   margin?: number;
   /** Fabric over a bending joint: links between two loose rings get LOOSE_SLACK. */
   loose?: boolean;
+  /** A bum: the back pushed out this far (m) in two cheeks, with a crease between. */
+  cheeks?: number;
+  /** The ring lifted this far (m) at its front and back centres: arches between the legs. */
+  crotch?: number;
+}
+
+/** How far round a ring the cheeks bulge (angle a: x = cos a, z = sin a; +z is the back). */
+function cheekShape(a: number): number {
+  const back = Math.PI / 2;
+  const lobe = (c: number) => Math.exp(-(((a - c) / 0.5) ** 2));
+  return lobe(back - 0.6) + lobe(back + 0.6); // (the crease: between the lobes, at the back centre)
+}
+
+/**
+ * How much of the crotch lift a ring's point gets: narrow peaks at the front
+ * and back centres, the back one lower (lifted fully there, it opened a dark
+ * gap under the bum when sitting on the bike).
+ */
+function crotchShape(a: number): number {
+  const s = Math.sin(a);
+  return Math.abs(s) ** 8 * (s > 0 ? 0.35 : 1);
 }
 
 export interface ClothTube {
@@ -134,6 +155,8 @@ export function refine(keys: ClothRing[], extra = 1): ClothRing[] {
         collide: ring.collide,
         margin: mix(ring.margin ?? MARGIN, next.margin ?? MARGIN),
         loose: ring.loose && next.loose,
+        cheeks: mix(ring.cheeks ?? 0, next.cheeks ?? 0),
+        crotch: mix(ring.crotch ?? 0, next.crotch ?? 0),
       });
     }
   });
@@ -200,13 +223,21 @@ export class Cloth {
       const n = tube.segments;
       tube.rings.forEach((ring, r) => {
         const side = tube.side;
-        this.ringBones.push((ring.collide ?? [ring.bone]).map((b) => resolve(tube.bones[b], side || 1)));
+        // (A tube in the middle, like the seat, is kept clear of both of a pair: both thighs)
+        this.ringBones.push(
+          (ring.collide ?? [ring.bone]).flatMap((b) => {
+            const ref = tube.bones[b];
+            return typeof ref === 'number' ? [ref] : side ? [resolve(ref, side)] : ref;
+          }),
+        );
         this.ringMargin.push([ring.margin ?? MARGIN]);
         for (let k = 0; k < n; k++) {
           const i = tube.start + r * n + k;
           const a = (k / n) * Math.PI * 2;
-          const x = ring.rx * Math.cos(a) + (ring.cx ?? 0) * side;
-          this.local.set([x, ring.y, ring.rz * Math.sin(a) + (ring.cz ?? 0)], i * 3);
+          const bulge = ring.cheeks ? ring.cheeks * cheekShape(a) : 0;
+          const x = (ring.rx + bulge) * Math.cos(a) + (ring.cx ?? 0) * side;
+          const y = ring.y + (ring.crotch ? ring.crotch * crotchShape(a) : 0);
+          this.local.set([x, y, (ring.rz + bulge) * Math.sin(a) + (ring.cz ?? 0)], i * 3);
           this.pin[i] = ring.pin;
           this.leash[i] = ring.leash;
           this.boneOf[i] = resolve(tube.bones[ring.bone], side || Math.sign(x));
