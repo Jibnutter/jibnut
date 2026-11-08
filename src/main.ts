@@ -19,7 +19,7 @@ const FOG_COLOR = 0xbfd3e6; // the haze along the horizon
 import './style.css';
 import { Skier } from './skier';
 import { ChaseCamera } from './chaseCamera';
-import { readControls } from './input';
+import { readControls, pollGamepad, rumble } from './input';
 import { createTerrain, MAP, SHOWCASE, CAN_BUILD, SPAWN, CUSTOM, SUMMER_MAP, heightAt, courseX, START_Z, FINISH_Z, END_Z, DECK_END_Z } from './terrain';
 import { Scenery } from './scenery';
 import { createRails } from './rails';
@@ -132,6 +132,9 @@ trickEl.id = 'trick';
 document.body.appendChild(trickEl);
 let trickTimer: number | undefined;
 skier.onLand = (message, clean, points) => {
+  // The controller feels it: a bump for a trick, a jolt for a sketchy one, a slam for a crash
+  if (message === 'Crash!') rumble(1, 380);
+  else rumble(clean ? 0.3 : 0.6, clean ? 120 : 220);
   setScore(score + points);
   if (clean) sound.chime(points);
   trickEl.innerHTML = '';
@@ -344,6 +347,7 @@ const tmpLockerSide = new THREE.Vector3();
 renderer.setAnimationLoop((time) => {
   timer.update(time);
   const dt = Math.min(timer.getDelta(), 0.05); // avoid huge steps after a tab switch
+  pollGamepad(playing ? null : startScreen.el); // (in the menu the pad moves between its buttons)
 
   scenery.update(dt);
   if (playing && editor?.active) {

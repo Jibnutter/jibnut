@@ -157,6 +157,14 @@ export class StartScreen {
           <dt><kbd>Esc</kbd></dt><dd>Menu</dd>
           <dt><kbd>P</kbd></dt><dd>Physical skiing (experimental)</dd>
           <dt><kbd>K</kbd></dt><dd>Show collision shapes</dd>
+          <dt class="group">Controller (Xbox layout)</dt><dd class="group"></dd>
+          <dt>Left stick / D-pad</dt><dd>Steer (A / D)</dd>
+          <dt><kbd>RT</kbd> or stick up</dt><dd>Tuck / pedal (W)</dd>
+          <dt><kbd>LT</kbd> or stick down</dt><dd>Brake (S)</dd>
+          <dt><kbd>A</kbd></dt><dd>Jump, and in the air grab / no-hander (Space)</dd>
+          <dt><kbd>B</kbd> / <kbd>RB</kbd></dt><dd>Shifty / tabletop (Right Shift)</dd>
+          <dt><kbd>X</kbd> · <kbd>Y</kbd> · <kbd>☰</kbd></dt><dd>Restart · camera · menu</dd>
+          <dt>In the menus</dt><dd>D-pad or stick to move, <kbd>A</kbd> to pick, <kbd>B</kbd> to go back</dd>
         </dl>
         <button type="button" class="back" data-go="main">Back</button>
       </section>`;

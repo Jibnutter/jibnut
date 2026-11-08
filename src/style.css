@@ -823,3 +823,10 @@ canvas {
 #start .opt.reset {
   justify-self: start;
 }
+
+/* The button the gamepad is on, in the menus */
+#start .pad-focus:focus {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px rgba(47, 111, 214, 0.55);
+}
