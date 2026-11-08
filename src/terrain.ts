@@ -281,35 +281,37 @@ const BACKCOUNTRY: MapDef = {
 const SUMMER: MapDef = {
   id: 'summer',
   name: 'Summer Dirt',
-  description: 'The snow is gone: a dirt line down a grassy hill. Four dirt doubles, then a wooden drop. Mind the gaps.',
-  features: ['4 dirt doubles: 4 to 6 m gaps', 'Wooden drop: 2.5 m', 'Bike only'],
-  sMin: -60,
-  startAngle: -14,
+  description: 'The snow is gone: a steep downhill track down a grassy hill. Four big dirt gaps, each bigger than the last, then a big wooden drop. Commit or case it.',
+  features: ['4 dirt gap jumps: 10 to 21.5 m gaps', 'Wooden drop: 4 m', 'Steep and fast: up to 90 km/h, bike only'],
+  sMin: -70,
+  startAngle: -18,
   program: [
-    [40, -14], // the hilltop above
+    [50, -18], // the hilltop above
     [15, 0], // easing onto the start deck
     [12, 0, 'deck-end'],
-    [6, -18], // the roll-in
-    [14, -18],
-    [10, -7, 'trail'], // onto the dirt line
+    [6, -24], // the roll-in: steep
+    [16, -24],
+    [10, -10, 'trail'], // onto the dirt line
 
-    // The doubles, on a steady gentle slope (pedal between them)
-    [10, -7],
-    [4, -7, 'd1'],
-    [30, -7, 'd2'],
-    [32, -7, 'd3'],
-    [34, -7, 'd4'],
+    // The gaps, down a steep track: no pedalling needed, the hill brings
+    // the speed (and each gap is sized for what it has built up)
+    [14, -10],
+    [4, -10, 'd1'],
+    [46, -11, 'd2'],
+    [52, -12, 'd3'],
+    [58, -12, 'd4'],
 
-    // The drop: its deck stands on the slope; past the edge the landing
-    // falls away steeply
-    [30, -7],
-    [26, -9, 'drop'],
-    [4, -30],
-    [10, -30],
-    [14, -6],
+    // The drop: its deck stands on a flat bench (scrubbing off some speed);
+    // past the edge the landing falls away steeply
+    [40, -10],
+    [20, 3],
+    [25, 0, 'drop'],
+    [4, -38],
+    [30, -38],
+    [18, -8],
 
     // Finish
-    [20, -5, 'finish'],
+    [20, -6, 'finish'],
     [30, -3],
     [10, 8, 'brake'],
     [22, 9, 'end'],
@@ -319,12 +321,12 @@ const SUMMER: MapDef = {
   tabletops: [],
   // A gentle S down the hill; straight through the jumps and the drop
   bends: (t) => [
-    [-60, 0],
+    [-70, 0],
     [t['deck-end'], 0],
     [t['trail'] + 2, 4],
     [t['d1'] - 12, 4],
-    [t['d4'] + 14, 4],
-    [t['drop'] - 20, -3],
+    [t['d4'] + 40, 4],
+    [t['drop'] - 26, -3],
     [t['drop'] + 30, -3],
     [t['finish'], 0],
   ],
@@ -340,15 +342,15 @@ const SUMMER: MapDef = {
   park: false,
   bounce: 0.5,
   snowDrag: 0,
-  showcase: { tag: 'd2', x: 5 },
+  showcase: { tag: 'd3', x: 6 },
   summer: true,
   doubles: [
-    { tag: 'd1', height: 1.2, takeoff: 4.5, gap: 3.5, landHeight: 1.0, top: 1.0, landing: 8, halfWidth: 2.5 },
-    { tag: 'd2', height: 1.4, takeoff: 5, gap: 4.5, landHeight: 1.15, top: 1.0, landing: 9, halfWidth: 2.5 },
-    { tag: 'd3', height: 1.6, takeoff: 5.5, gap: 5.5, landHeight: 1.3, top: 1.0, landing: 10, halfWidth: 2.5 },
-    { tag: 'd4', height: 1.8, takeoff: 6, gap: 6, landHeight: 1.45, top: 1.2, landing: 11, halfWidth: 2.6 },
+    { tag: 'd1', height: 1.8, takeoff: 6, gap: 10, landHeight: 1.6, top: 1.0, landing: 13, halfWidth: 2.6 },
+    { tag: 'd2', height: 2.0, takeoff: 6.5, gap: 14, landHeight: 1.8, top: 1.0, landing: 14, halfWidth: 2.8 },
+    { tag: 'd3', height: 2.2, takeoff: 7, gap: 17.5, landHeight: 2.0, top: 1.2, landing: 15, halfWidth: 3 },
+    { tag: 'd4', height: 2.4, takeoff: 7.5, gap: 21.5, landHeight: 2.2, top: 1.2, landing: 16, halfWidth: 3 },
   ],
-  drop: { tag: 'drop', height: 2.5, ramp: 9, deck: 6, halfWidth: 1.4 },
+  drop: { tag: 'drop', height: 4, ramp: 16, deck: 7, halfWidth: 1.5 },
 };
 
 /**
